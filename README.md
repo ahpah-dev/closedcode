@@ -1,2 +1,156 @@
-# closedcode
-Free. Unlimited. Public-domain agentic coding for Windows and macOS. Local agents, OmniRoute, verified free-only routing and instant fallback.
+# ClosedCode
+
+**Free. Unlimited. Yours.** A standalone coding agent desktop app for Windows and macOS, with a focused workspace, expressive agents, local project tools, OmniRoute setup, and automatic provider fallback.
+
+[Website](https://closedcode-desktop.vercel.app) · [Download releases](https://github.com/ahpah-dev/closedcode/releases) · [Source](https://github.com/ahpah-dev/closedcode)
+
+ClosedCode charges no subscription, seat fee, or fee per run. Use it as often as you want with the models you configure. Hosted providers still control their own accounts, pricing, quotas, and availability; local inference uses your computer's resources. Individual agent runs have execution bounds, and local history holds up to 200 sessions.
+
+## Download and start
+
+Get the installers from [GitHub Releases](https://github.com/ahpah-dev/closedcode/releases). The website shows downloads available in the latest published release.
+
+| Platform | Download |
+| --- | --- |
+| Windows x64 | `ClosedCode-<version>-win-x64-setup.exe` or `-portable.exe` |
+| macOS 13+ on Apple silicon | `ClosedCode-<version>-mac-arm64.dmg` or `.zip` |
+| macOS 13+ on Intel | `ClosedCode-<version>-mac-x64.dmg` or `.zip` |
+
+The app includes its interface, local companion, and a Node.js runtime with npm. You do not need to install Node.js, run a development server, or paste a pairing token to use the desktop app. Provider accounts, credentials, and model weights are not bundled.
+
+1. Install or open ClosedCode. On macOS, copy the app into Applications.
+2. Choose **Connect project** and select your folder in the native directory picker.
+3. Set up OmniRoute or choose your local Ollama route in **Model routing**.
+4. Pick an agent, choose Build or Plan mode, and send a task.
+
+The release builds are unsigned and are not notarized. Windows SmartScreen and macOS Gatekeeper may show a warning. Every release includes `SHA256SUMS.txt` so you can verify the downloaded files.
+
+## OmniRoute setup and fallback
+
+Choose **Start OmniRoute** in setup. ClosedCode uses its bundled Node/npm runtime to launch the open source [OmniRoute](https://github.com/diegosouzapw/OmniRoute) package. The first setup may download it and requires an internet connection. Its dashboard is normally at `http://127.0.0.1:20128`.
+
+Connect an eligible provider in the OmniRoute dashboard, then copy its endpoint API key into ClosedCode's routing settings. The default primary URL is `http://127.0.0.1:20128/v1`; the default model setting is `auto`. Installing a gateway alone does not create a provider account or grant model access.
+
+Each route consists of an OpenAI-compatible base URL, a model, and an optional API key. You can configure a primary route and fallback routes. Failed connections, HTTP 429/408/5xx, and request timeouts move directly to the next eligible route. Authentication failures are reported so you can fix the configuration. The default provider request timeout is 45 seconds.
+
+Completed tool rounds survive a route change. If a provider stream fails midway, ClosedCode removes that round's incomplete output before streaming its replacement. The successful replacement route stays selected for the rest of the run. Fallback does not remove provider rate limits or make a slow request instantaneous.
+
+ClosedCode stops the OmniRoute process tree it launched when the app quits. It does not stop a gateway started independently.
+
+## Free-only routing
+
+**Free Only is enabled by default.** The companion checks live model catalogs before a route receives inference and verifies each fallback independently. It accepts:
+
+- Direct models with explicit zero input/output pricing and no additional paid or unknown price component.
+- An exact `:free` model ID advertised by the configured endpoint, without contradictory paid metadata.
+- Downloaded local Ollama models verified through its local model inventory; cloud variants are excluded.
+
+Paid models, unknown prices, discovery failures, non-chat models, and automatic/combo targets are blocked. A `free: true` label alone does not qualify. The `auto` setting resolves to a concrete verified free model, preferring advertised tool support. Catalog results are cached for 30 seconds per endpoint and credential.
+
+For a localhost OmniRoute gateway, Free Only requires that ClosedCode started it. Managed startup disables `OMNIROUTE_EMERGENCY_FALLBACK` and `OMNIROUTE_AUTO_FREE_FALLBACK_TO_FULL_POOL`, so those internal fallbacks cannot silently change the selected route. An independently started gateway is excluded in this mode; stop it yourself and start it through ClosedCode setup. Local Ollama remains eligible as a fallback.
+
+Pricing evidence comes from the endpoint you configure. Provider eligibility, free allowances, and model availability still apply. ClosedCode does not supply unlimited free hosted inference. Turning Free Only off permits your own paid providers; ClosedCode itself remains free.
+
+For local inference, install [Ollama](https://ollama.com) and download the default fallback model:
+
+```sh
+ollama pull qwen2.5-coder:7b
+```
+
+Ollama must be running at `http://127.0.0.1:11434/v1`. You can also choose **Use local Ollama route** to make it primary. Local model capability, speed, and hardware requirements vary.
+
+## Agents, plugins, and tools
+
+| Agent | Personality and role |
+| --- | --- |
+| Atlas | Calm, pragmatic builder for implementation and refactoring |
+| Nova | Curious explorer for codebase investigation and architecture |
+| Sage | Thoughtful reviewer for correctness, maintainability, and edge cases |
+| Echo | Precise debugger for tracing root causes and explaining fixes |
+
+Their guidance is included in actual provider requests. They share the same selected workspace and respect the current mode and enabled tools.
+
+**Build** mode can read and write project files. **Plan** mode investigates without modifying files or running commands. The project panel displays real files, and the Activity tab shows tool calls, subagent activity, route changes, and errors. Text attachments add context to a prompt; answers and tool events stream as the agent works. **Stop** cancels the active request.
+
+Built-in plugin switches control real tools:
+
+- **File Context:** list/read files, Build-mode file edits, and commands that require approval.
+- **Code Review:** read the current working-tree Git diff.
+- **Subagents:** independent, bounded, read-only investigations. A parent run can delegate twice; children cannot delegate further or execute commands.
+
+Plugins currently consist of the built-in capabilities listed above. Each main run permits at most 12 provider rounds and 24 tool calls. Tool calling depends on the selected model and provider.
+
+Development commands pause for your approval of the exact program, arguments, and working directory. Supported programs are Node, npm/npx, Python, Git, Cargo, Go, and Bun; extra language toolchains must be installed separately. Git operations are read-only. Shells and arbitrary executable paths are prohibited. Commands have a 60-second timeout and a 64 KB output limit; rejected approvals start no process, and cancellation stops active commands.
+
+File tools reject path traversal, escaping symlinks/junctions, Windows alternate streams, credential files, and ignored directories. File reads and writes are bounded to 512 KB. Approved code and dependency scripts run with your OS user's permissions; the companion is not an OS sandbox.
+
+## Local history and privacy
+
+The desktop UI, companion, project selection, and session history run locally. History is saved atomically in `companion/local.json` inside the app's user-data directory and survives restarts. Each session retains its title, agent, project, status, message IDs, and timestamps. History supports creating, reopening, updating, and deleting sessions.
+
+The companion binds to loopback, requires its token for desktop API access, and accepts only the desktop UI's exact browser origin. Electron's renderer has Node integration disabled, context isolation enabled, and a restricted bridge for project selection and connection details.
+
+Project files stay on your computer. Prompts, history, and file context selected by the agent go to the inference endpoint you configured. Provider API keys are not written into companion session state. The companion token grants access to your selected workspace and is private to the app; a standalone browser connection uses an explicit pairing token.
+
+## Build from source
+
+Use Node.js 24 and npm on Windows or macOS:
+
+```sh
+git clone https://github.com/ahpah-dev/closedcode.git
+cd closedcode
+npm ci
+npm test
+node --test desktop/*.test.mjs
+npx tsc --noEmit
+npm run desktop:dev
+```
+
+Build installers on the target operating system:
+
+```sh
+# Windows x64
+npm run desktop:dist -- --win --x64
+
+# macOS Apple silicon
+npm run desktop:dist -- --mac --arm64
+
+# macOS Intel
+npm run desktop:dist -- --mac --x64
+```
+
+Outputs are written to `release/`. The build prepares the static React interface, downloads the pinned Node runtime with checksum verification, and packages Electron with the local companion. macOS DMG creation and native verification require a Mac; a cross-built ZIP is not a substitute for that verification.
+
+The [desktop release workflow](.github/workflows/desktop-release.yml) builds Windows x64, macOS arm64, and macOS x64 on native GitHub runners. It runs tests and packaged runtime smoke checks, verifies all six installer assets, computes SHA256 checksums, and publishes a release when a matching `v<version>` tag is pushed. Manual dispatch also supports build-only runs.
+
+## Standalone companion and optional web workspace
+
+For a browser-based development workspace, run `npm run dev:all`, or double-click **Start ClosedCode.cmd** on Windows after installing dependencies. This starts the local web UI and companion and prints the workspace URL and pairing token. Ctrl+C stops them.
+
+To run only the companion:
+
+```sh
+node companion/server.mjs
+```
+
+Its default URL is `http://127.0.0.1:47821`. Configuration variables are `CLOSED_CODE_PORT`, `CLOSED_CODE_WORKSPACE`, and `CLOSED_CODE_ORIGIN`. Standalone state defaults to the ignored `.closedcode/local.json` file. The token protects file tools, agent runs, approvals, and session endpoints. See [companion documentation](companion/README.md) for the coding API and SSE event format.
+
+The full session API is compatible with the optional web backend:
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| GET | `/api/sessions` | List saved sessions |
+| POST | `/api/sessions` | Create a session from title, agent, project, and optional messages |
+| GET | `/api/sessions/:id` | Read one session |
+| PATCH | `/api/sessions/:id` | Update title, agent, project, status, or messages |
+| DELETE | `/api/sessions/:id` | Delete one session |
+
+The optional hosted web backend uses Vinext, Cloudflare Workers, Drizzle, and D1 with authenticated owner-scoped history. It is separate from desktop history; no hosted database or sign-in is needed for the desktop app.
+
+## License
+
+Original ClosedCode code is released under the [Unlicense](LICENSE). Take it, use it, modify it, rename it, redistribute it, or sell it for commercial or non-commercial purposes. Attribution to ClosedCode is not required for the original code. The software is provided as-is.
+
+Third-party software retains its own license terms and notices. Those obligations still apply when redistributing dependencies or bundled runtimes. See [third-party notices](THIRD_PARTY_NOTICES.md) and [collected dependency licenses](THIRD_PARTY_LICENSES.txt).
+
+ClosedCode is independent of OmniRoute, Ollama, Electron, Codex, OpenCode, and rNexa.

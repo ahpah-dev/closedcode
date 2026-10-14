@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://closedcode-desktop.vercel.app/sitemap.xml

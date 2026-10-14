@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080a10">
+  <title>ClosedCode — Free. Unlimited. Yours.</title>
+  <meta name="description" content="A free, public-domain desktop coding workspace with expressive agents, local tools, OmniRoute support, and verified free-first model routing. Your agents. Your code. Your rules.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://closedcode-desktop.vercel.app/">
+  <meta property="og:title" content="ClosedCode — Free. Unlimited. Yours.">
+  <meta property="og:description" content="Your agents. Your code. Your rules. An unrestricted coding workspace, with original code dedicated to the public domain.">
+  <meta property="og:image" content="/assets/workspace.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://closedcode-desktop.vercel.app/">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/orbital-wallpaper.png" as="image">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+      <symbol id="i-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="m7 7-5 5 5 5m10-10 5 5-5 5M14 4l-4 16"/></symbol>
+      <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4 1-4-2-6-2m12 4v-4a3.5 3.5 0 0 0-1-3c3-.3 6-1.5 6-6a4.5 4.5 0 0 0-1.2-3.2A4 4 0 0 0 18.7 2S17.5 1.7 15 3a11 11 0 0 0-6 0C6.5 1.7 5.3 2 5.3 2a4 4 0 0 0-.1 2.8A4.5 4.5 0 0 0 4 8c0 4.5 3 5.7 6 6a3.5 3.5 0 0 0-1 3v4"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 4v6c0 4-8 8-8 8s-8-4-8-8V7l8-4Z"/><path d="m8 12 3 3 5-6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></symbol>
+      <symbol id="i-network" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v6m-7 4v-4h14v4"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V4h6l3 3h9v13H3V7Z"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m7 0h5"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+      <symbol id="i-windows" viewBox="0 0 24 24"><path d="m3 5 8-1v7H3V5Zm10-1 8-1v8h-8V4ZM3 13h8v7l-8-1v-6Zm10 0h8v8l-8-1v-7Z"/></symbol>
+      <symbol id="i-apple" viewBox="0 0 24 24"><path d="M15 3c0 2-1.5 4-3 4 0-2 1-4 3-4Zm4 14c-1 3-2 5-4 5-1 0-2-1-3-1s-2 1-3 1c-2 0-5-5-5-9 0-3 2-5 4-5 2 0 3 1 4 1s2-1 4-1c1.5 0 3 1 4 2-4 2-3 6-1 7Z"/></symbol>
+    </defs>
+  </svg>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="orbital-scene" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="#" aria-label="ClosedCode home"><img src="assets/logo.svg" width="32" height="32" alt=""><span>ClosedCode<span class="brand-period">.</span></span></a>
+      <button class="menu-toggle" aria-label="Open navigation" aria-controls="main-nav" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button>
+      <nav id="main-nav" aria-label="Main navigation">
+        <a href="#product">Product</a><a href="#download">Download</a><a href="#public-domain">Public domain</a><a href="#faq">FAQ</a>
+        <a class="nav-github" data-repo-link href="https://github.com/ahpah-dev/closedcode"><svg class="icon"><use href="#i-github"/></svg>GitHub<svg class="icon icon-small"><use href="#i-up-right"/></svg></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-content">
+        <a class="hero-badge" href="#public-domain"><span class="status-dot"></span>Open source. Public domain.<svg class="icon icon-small"><use href="#i-arrow"/></svg></a>
+        <h1 id="hero-title">Free. <span>Unlimited.</span></h1>
+        <p class="hero-tagline">Your agents. Your code. Your rules.</p>
+        <p class="hero-description">An unrestricted desktop workspace for agentic coding.<br>Thoughtful agents, your own models, and room for your next big idea.</p>
+        <div class="hero-actions"><a class="button button-primary" href="#download"><svg class="icon"><use href="#i-download"/></svg>Get ClosedCode<svg class="icon icon-small"><use href="#i-arrow"/></svg></a><a class="button button-glass" data-repo-link href="https://github.com/ahpah-dev/closedcode"><svg class="icon"><use href="#i-github"/></svg>Explore the source<svg class="icon icon-small"><use href="#i-up-right"/></svg></a></div>
+        <p class="usage-note">Unlimited app usage. AI providers may have quotas; local inference uses your hardware.</p>
+        <p class="hero-footnote">No subscription. No license key. No gate between you and your code.</p>
+      </div>
+      <figure class="workspace-showcase reveal">
+        <div class="screenshot-chrome"><div class="window-controls"><span></span><span></span><span></span></div><span><svg class="icon"><use href="#i-code"/></svg>ClosedCode · Your workspace</span><span class="chrome-label">LOCAL FIRST</span></div>
+        <img src="assets/workspace.jpg" width="1576" height="1252" alt="The ClosedCode desktop workspace with its agent team, project files, code viewer, and prompt composer.">
+        <figcaption>One workspace. Your entire coding flow.</figcaption>
+      </figure>
+      <div class="connection-strip"><span>WORKS WITH YOUR MODEL STACK</span><div><svg class="icon"><use href="#i-network"/></svg>OmniRoute</div><div><svg class="icon"><use href="#i-terminal"/></svg>Ollama</div><div><svg class="icon"><use href="#i-code"/></svg>OpenAI-compatible APIs</div></div>
+    </section>
+
+    <section class="product-section section-wrap" id="product" aria-labelledby="product-title">
+      <div class="section-heading reveal"><span class="eyebrow">THINK BIG. STAY IN FLOW.</span><h2 id="product-title">The whole workflow.<br><span>One clear space.</span></h2><p>From the first question to the final diff.<br>Your agents and local tools, working together.</p></div>
+      <div class="capability-grid">
+        <article class="capability-card reveal"><div class="card-topline"><svg class="icon"><use href="#i-spark"/></svg><span>01 / YOUR TEAM</span></div><div class="capability-visual team-visual" aria-label="Illustration of specialized subagent investigations"><div class="delegation-row"><span class="agent-dot atlas"></span><div><strong>Atlas</strong><span>Working with your team</span></div><span class="delegation-pill">BUILDER</span></div><div class="delegation-branch"><div><span class="agent-dot nova"></span><span>Nova<span>Explore the codebase</span></span><svg class="icon"><use href="#i-spark"/></svg></div><div><span class="agent-dot sage"></span><span>Sage<span>Review the changes</span></span><svg class="icon"><use href="#i-shield"/></svg></div></div><span class="visual-caption">Illustrative delegation</span></div><h3>A little personality.<br>A lot of capability.</h3><p>Build with Atlas, explore with Nova, review with Sage, or debug with Echo. Focused, read-only subagents bring another perspective when you need one.</p><a class="text-link" href="#agents">Meet your agents<svg class="icon icon-small"><use href="#i-arrow"/></svg></a></article>
+        <article class="capability-card reveal"><div class="card-topline"><svg class="icon"><use href="#i-network"/></svg><span>02 / YOUR MODELS</span></div><div class="capability-visual route-visual" aria-label="Illustration of verified free model routing"><div class="free-protection"><svg class="icon"><use href="#i-shield"/></svg><span>Free models only</span><span class="mini-toggle"></span></div><div class="mini-route"><span><svg class="icon"><use href="#i-network"/></svg>OmniRoute</span><svg class="icon"><use href="#i-arrow"/></svg><span><svg class="icon"><use href="#i-spark"/></svg>Verified free</span></div><div class="fallback-route"><span class="status-dot"></span>Available fallback<span>Ready when needed</span></div><span class="visual-caption">Illustrative route configuration</span></div><h3>Free-first.<br>Momentum built in.</h3><p>Discover verified zero-cost models. Move to an eligible fallback after provider failure. Free-only mode blocks paid and unverified routes, including unsafe gateway fallbacks.</p><a class="text-link" href="#routing-detail">See how routing works<svg class="icon icon-small"><use href="#i-arrow"/></svg></a></article>
+        <article class="capability-card reveal"><div class="card-topline"><svg class="icon"><use href="#i-folder"/></svg><span>03 / YOUR WORKSPACE</span></div><div class="capability-visual local-visual" aria-label="Illustration of workspace access and command approval"><div class="project-path"><svg class="icon"><use href="#i-folder"/></svg><code>your-next-big-thing/</code><span>LOCAL</span></div><div class="command-preview"><svg class="icon"><use href="#i-terminal"/></svg><code>npm test</code></div><div class="approval-preview"><svg class="icon"><use href="#i-shield"/></svg><span>Command approval required</span><span class="approval-label">Your call</span></div><span class="visual-caption">Illustrative approval request</span></div><h3>Your workspace.<br>Your say.</h3><p>Read, search, edit, and review files in the project you choose. Explore in Plan mode, edit in Build mode, and approve command execution before it runs.</p><a class="text-link" href="#faq">Get to know ClosedCode<svg class="icon icon-small"><use href="#i-arrow"/></svg></a></article>
+      </div>
+    </section>
+
+    <section class="agents-section section-wrap" id="agents" aria-labelledby="agents-title">
+      <div class="agent-section-intro reveal"><span class="eyebrow">DIFFERENT PERSPECTIVES. A SHARED GOAL.</span><h2 id="agents-title">Meet the minds<br>behind the momentum.</h2><p>Choose a personality for the way you work.<br>Give it a project and a good question.</p></div>
+      <div class="agent-grid reveal">
+        <article class="agent-profile"><div class="agent-orb atlas"><i></i><i></i><span></span></div><h3>Atlas</h3><span>The builder</span><p>Calm focus.<br>Thoughtful execution.</p></article>
+        <article class="agent-profile"><div class="agent-orb nova"><i></i><i></i><span></span></div><h3>Nova</h3><span>The explorer</span><p>Curious questions.<br>A fresh perspective.</p></article>
+        <article class="agent-profile"><div class="agent-orb sage"><i></i><i></i><span></span></div><h3>Sage</h3><span>The reviewer</span><p>A sharp eye.<br>A steady point of view.</p></article>
+        <article class="agent-profile"><div class="agent-orb echo"><i></i><i></i><span></span></div><h3>Echo</h3><span>The debugger</span><p>Patient investigation.<br>Precise fixes.</p></article>
+      </div>
+    </section>
+
+    <section class="routing-section section-wrap" id="routing-detail" aria-labelledby="routing-title">
+      <div class="routing-copy reveal"><span class="eyebrow">ONE GATEWAY. YOUR CHOICE.</span><h2 id="routing-title">Keep going.<br><span>Keep control.</span></h2><p>OmniRoute brings compatible providers behind one local endpoint. ClosedCode checks the live model catalog and selects verified zero-cost routes when Free models only is on.</p><p>If a provider fails, the next eligible route gets a turn. Local Ollama models can use your own hardware. Provider accounts, model availability, and quotas remain separate from the app.</p><ul><li><svg class="icon"><use href="#i-check"/></svg>Verified free model discovery</li><li><svg class="icon"><use href="#i-check"/></svg>Fallback after provider failure</li><li><svg class="icon"><use href="#i-check"/></svg>Local models, your own compute</li></ul></div>
+      <figure class="routing-screenshot reveal"><img src="assets/routing.jpg" width="1576" height="1252" loading="lazy" alt="ClosedCode model routing settings, showing free-only mode, primary model settings, and fallback configuration."><figcaption>Actual ClosedCode routing interface.</figcaption></figure>
+    </section>
+
+    <section class="public-domain-section section-wrap" id="public-domain" aria-labelledby="public-domain-title">
+      <div class="public-domain-card reveal"><div class="public-domain-mark"><svg class="icon"><use href="#i-code"/></svg><span>PUBLIC DOMAIN</span></div><span class="eyebrow">NO STRINGS. JUST POSSIBILITIES.</span><h2 id="public-domain-title">Unconditionally yours.</h2><p class="license-statement">Take the code. Change it. Monetize it.<br><span>No permission. No credit required.</span></p><p class="license-explanation">The original ClosedCode code is dedicated to the public domain through the Unlicense. Build your own version, put your name on it, or make it part of something bigger.</p><div class="rights-grid"><span><svg class="icon"><use href="#i-check"/></svg>Use it commercially</span><span><svg class="icon"><use href="#i-check"/></svg>Modify & redistribute</span><span><svg class="icon"><use href="#i-check"/></svg>Relicense your version</span><span><svg class="icon"><use href="#i-check"/></svg>No attribution required</span></div><div class="source-command"><svg class="icon"><use href="#i-terminal"/></svg><code id="source-command">git clone https://github.com/ahpah-dev/closedcode.git</code><button id="copy-source" type="button" aria-label="Copy clone command" disabled><svg class="icon"><use href="#i-copy"/></svg></button></div><div class="license-links"><a class="text-link" data-repo-link href="https://github.com/ahpah-dev/closedcode">Explore the source<svg class="icon icon-small"><use href="#i-up-right"/></svg></a><a class="text-link" data-license-link href="https://github.com/ahpah-dev/closedcode/blob/main/LICENSE" target="_blank" rel="noreferrer">Read the Unlicense<svg class="icon icon-small"><use href="#i-up-right"/></svg></a></div><span class="dependency-note">This applies to original ClosedCode code. Third-party components retain their own licenses.</span></div>
+    </section>
+
+    <section class="download-section section-wrap" id="download" aria-labelledby="download-title">
+      <div class="download-heading reveal"><span class="eyebrow">YOUR NEXT IDEA IS WAITING.</span><h2 id="download-title">Make room<br>for what’s next.</h2><p>A native coding workspace. Unrestricted app access.<br>Choose your platform to check the latest published installer.</p></div>
+      <div class="download-card reveal"><div class="platform-chooser" role="group" aria-label="Choose download platform"><button class="is-selected" type="button" data-platform="windows" aria-pressed="true"><svg class="icon"><use href="#i-windows"/></svg>Windows</button><button type="button" data-platform="mac" aria-pressed="false"><svg class="icon"><use href="#i-apple"/></svg>macOS</button></div><div class="architecture-chooser" id="architecture-chooser" role="group" aria-label="Choose Mac architecture" hidden><button class="is-selected" type="button" data-architecture="arm64" aria-pressed="true">Apple silicon</button><button type="button" data-architecture="x64" aria-pressed="false">Intel</button></div><div class="download-product"><img src="assets/logo.svg" alt="" width="64" height="64"><div><h3>ClosedCode<span class="release-version" id="release-version"></span></h3><p id="platform-description">Native desktop app for Windows</p></div></div><p class="download-status" id="download-status" role="status">Checking published releases…</p><a id="download-link" class="button button-primary download-button" role="button" aria-disabled="true" tabindex="0"><svg class="icon"><use href="#i-download"/></svg><span id="download-label">Checking availability</span><svg class="icon icon-small"><use href="#i-arrow"/></svg></a><div class="download-secondary"><a data-releases-link href="https://github.com/ahpah-dev/closedcode/releases">All releases<svg class="icon icon-small"><use href="#i-up-right"/></svg></a><a id="alternative-download" hidden>Portable<svg class="icon icon-small"><use href="#i-download"/></svg></a><a id="checksum-link" hidden target="_blank" rel="noreferrer">Checksums<svg class="icon icon-small"><use href="#i-shield"/></svg></a><button id="refresh-releases" type="button">Refresh availability</button></div><p class="unsigned-note" id="unsigned-note">Unsigned builds; macOS builds are also unnotarized. Your operating system may show a security prompt. See the release instructions.</p><p class="download-usage-note">Unlimited app usage. AI providers may have quotas; local inference uses your hardware.</p></div>
+    </section>
+
+    <section class="faq-section section-wrap" id="faq" aria-labelledby="faq-title">
+      <div class="faq-heading reveal"><span class="eyebrow">A FEW GOOD QUESTIONS.</span><h2 id="faq-title">The details,<br>without the fine print.</h2><p>More questions? The source is always<br>a good place to start.</p><a class="text-link" data-repo-link href="https://github.com/ahpah-dev/closedcode">Open GitHub<svg class="icon icon-small"><use href="#i-up-right"/></svg></a></div>
+      <div class="faq-list reveal">
+        <details open><summary>Is ClosedCode really free and unlimited?<svg class="icon"><use href="#i-plus"/></svg></summary><p>ClosedCode has no app subscription, license key, or app usage cap. AI models are separate: providers can have quotas or usage charges, and local inference uses your hardware. Free models only blocks paid and unverified routes.</p></details>
+        <details><summary>Can I sell or relicense my own version?<svg class="icon"><use href="#i-plus"/></svg></summary><p>Yes. Original ClosedCode code is dedicated to the public domain through the Unlicense. You can copy, modify, redistribute, relicense, and monetize it without asking permission or giving credit. Third-party dependencies retain their own licenses.</p></details>
+        <details><summary>Which models can I connect?<svg class="icon"><use href="#i-plus"/></svg></summary><p>Connect an OpenAI-compatible endpoint, use OmniRoute as a gateway, or discover installed local Ollama models. With Free models only enabled, ClosedCode checks the catalog for verified zero-cost, compatible models before inference. Availability depends on your provider and account.</p></details>
+        <details><summary>What stays on my computer?<svg class="icon"><use href="#i-plus"/></svg></summary><p>Your local companion works in the project folder you choose. Model requests send the relevant context to your configured provider. A local model route uses the service running on your own computer. Choose your provider and workspace deliberately.</p></details>
+        <details><summary>How do agents and subagents work?<svg class="icon"><use href="#i-plus"/></svg></summary><p>Atlas builds, Nova explores, Sage reviews, and Echo debugs. Each has a focused approach. The subagents plugin allows up to two focused, read-only investigations by another agent. Built-in plugins also add file context and Git diff review.</p></details>
+        <details><summary>Why is an installer unavailable for my platform?<svg class="icon"><use href="#i-plus"/></svg></summary><p>Each download appears when its actual installer is published in a GitHub release. The platform chooser reports that availability. If a build is not published yet, the public source remains available for building locally.</p></details>
+      </div>
+    </section>
+
+    <section class="closing-section"><div class="closing-glow" aria-hidden="true"></div><img src="assets/logo.svg" width="51" height="51" alt=""><h2>Build what’s next.<br><span>Make it yours.</span></h2><a class="button button-primary" href="#download"><svg class="icon"><use href="#i-download"/></svg>Get ClosedCode<svg class="icon icon-small"><use href="#i-arrow"/></svg></a><p>Free. Unlimited app usage. Public-domain original code.</p></section>
+  </main>
+
+  <footer class="site-footer"><div class="footer-top"><a class="brand" href="#"><img src="assets/logo.svg" width="27" height="27" alt=""><span>ClosedCode<span class="brand-period">.</span></span></a><span>Built to be yours.</span><nav aria-label="Footer navigation"><a href="#download">Download</a><a data-repo-link href="https://github.com/ahpah-dev/closedcode">GitHub</a><a data-license-link href="https://github.com/ahpah-dev/closedcode/blob/main/LICENSE" target="_blank" rel="noreferrer">Unlicense</a></nav></div><div class="footer-bottom"><span>Original ClosedCode code is public domain. Third-party components retain their own licenses.</span><a data-notices-link href="https://github.com/ahpah-dev/closedcode/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices<svg class="icon icon-small"><use href="#i-up-right"/></svg></a></div></footer>
+  <div class="toast" id="site-toast" role="status" aria-live="polite"></div>
+</body>
+</html>

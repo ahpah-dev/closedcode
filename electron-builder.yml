@@ -1,0 +1,70 @@
+appId: com.closedcode.app
+productName: ClosedCode
+copyright: ClosedCode — public domain software
+electronVersion: 44.7.2
+asar: true
+npmRebuild: false
+directories:
+  output: release
+  buildResources: public/desktop-icons
+files:
+  - desktop/**/*
+  - '!desktop/resources/**/*'
+  - '!desktop/**/*.test.mjs'
+  - companion/**/*.mjs
+  - desktop-ui-dist/**/*
+  - package.json
+  - LICENSE
+  - UNLICENSE
+  - THIRD_PARTY_NOTICES.md
+  - THIRD_PARTY_LICENSES.txt
+  - '!node_modules/**/*'
+  - '!**/.env*'
+  - '!**/.closedcode/**/*'
+extraResources:
+  - from: desktop/resources/runtime
+    to: runtime
+    filter:
+      - '**/*'
+  - from: public/desktop-icons/icon.png
+    to: icon.png
+win:
+  icon: public/desktop-icons/icon.ico
+  extraResources:
+    # electron-builder deliberately skips node_modules at a copy root. Map the
+    # bundled Node distribution's directory separately so npm/npx ship intact.
+    - from: desktop/resources/runtime/node_modules
+      to: runtime/node_modules
+      filter:
+        - '**/*'
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  requestedExecutionLevel: asInvoker
+  signAndEditExecutable: true
+nsis:
+  artifactName: ClosedCode-${version}-win-${arch}-setup.${ext}
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ClosedCode
+portable:
+  artifactName: ClosedCode-${version}-win-${arch}-portable.${ext}
+mac:
+  icon: public/desktop-icons/icon.icns
+  category: public.app-category.developer-tools
+  minimumSystemVersion: '13.0'
+  identity: null
+  hardenedRuntime: false
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  artifactName: ClosedCode-${version}-mac-${arch}.${ext}
+publish: null
