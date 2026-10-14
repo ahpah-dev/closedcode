@@ -99,7 +99,7 @@ test('legacy endpoint stays compatible while upgrading old records to full sessi
   const { request } = await start();
   const migrated = (await (await request('/api/sessions')).json()).sessions[0];
   assert.equal(migrated.id, 'legacy-one');
-  assert.equal(migrated.project, root);
+  assert.equal(migrated.project, await fs.realpath(root));
   assert.equal(typeof migrated.messages[0].id, 'string');
   assert.equal(migrated.messages[0].createdAt, '2026-10-14T10:00:00.000Z');
   assert.equal((await (await request('/api/session')).json()).sessions[0].mode, 'build');
