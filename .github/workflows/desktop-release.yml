@@ -1,0 +1,197 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag matching package.json (blank uses v<version>)'
+        required: false
+        type: string
+        default: ''
+      publish:
+        description: 'Publish the installers as a GitHub release'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Validate release version and source
+        id: release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const tag = process.env.REF_TYPE === 'tag' ? process.env.REF_NAME : (process.env.INPUT_RELEASE_TAG?.trim() || `v${version}`);
+          if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag) || tag !== `v${version}`) throw new Error('Release tag must equal v<package.json version>.');
+          const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          try {
+            const taggedSha = execFileSync('git', ['rev-parse', '--verify', `refs/tags/${tag}^{commit}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+            if (taggedSha !== sha) throw new Error('Existing release tag points at another commit. Dispatch its ref or bump the package version.');
+          } catch (error) {
+            if (error.status !== 128) throw error;
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\nversion=${version}\nsha=${sha}\n`);
+          NODE
+
+  build:
+    needs: metadata
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: macos-latest
+            platform: mac
+            arch: arm64
+          # Intel packaging and smoke use a native Intel runner.
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.metadata.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --include=dev --include=optional
+      - name: Test companion and session persistence
+        run: npm test
+      - name: Test desktop main process helpers
+        run: node --test desktop/*.test.mjs
+      - name: Build unsigned desktop installers
+        run: npm run desktop:dist -- --${{ matrix.platform }} --${{ matrix.arch }}
+      - name: Smoke-test packaged desktop runtime
+        run: node scripts/build-desktop.mjs --smoke --skip-build --${{ matrix.platform }} --${{ matrix.arch }}
+      - name: Collect installers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: closedcode-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    needs: [metadata, build]
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+      RELEASE_SHA: ${{ needs.metadata.outputs.sha }}
+      RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.metadata.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Download platform installers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: closedcode-desktop-*
+          path: release
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Verify platform coverage and calculate checksums
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir, writeFile } from 'node:fs/promises';
+          import { createHash } from 'node:crypto';
+          import { createReadStream } from 'node:fs';
+          const files = (await readdir('release')).filter((name) => /\.(exe|dmg|zip)$/.test(name)).sort();
+          const version = process.env.RELEASE_VERSION;
+          const expected = [
+            `ClosedCode-${version}-win-x64-setup.exe`,
+            `ClosedCode-${version}-win-x64-portable.exe`,
+            `ClosedCode-${version}-mac-arm64.dmg`,
+            `ClosedCode-${version}-mac-arm64.zip`,
+            `ClosedCode-${version}-mac-x64.dmg`,
+            `ClosedCode-${version}-mac-x64.zip`,
+          ].sort();
+          if (JSON.stringify(files) !== JSON.stringify(expected)) throw new Error(`Installer set does not match all supported platforms: ${files.join(', ')}`);
+          const sums = [];
+          for (const name of files) {
+            const hash = createHash('sha256');
+            for await (const chunk of createReadStream(`release/${name}`)) hash.update(chunk);
+            sums.push(`${hash.digest('hex')}  ${name}`);
+          }
+          await writeFile('release/SHA256SUMS.txt', `${sums.join('\n')}\n`);
+          NODE
+      - name: Prepare release notes
+        run: |
+          cat > "$RUNNER_TEMP/closedcode-release-notes.md" <<'NOTES'
+          ClosedCode is a standalone open source coding workspace with a bundled local companion and Node.js runtime.
+
+          Downloads:
+          - Windows x64: setup installer or portable executable.
+          - macOS: DMG or ZIP for Apple silicon (arm64) and Intel (x64).
+
+          These builds are unsigned and are not notarized. Windows SmartScreen and macOS Gatekeeper may show a warning. Check SHA256SUMS.txt before installing.
+
+          Original ClosedCode source is released under the Unlicense. Bundled third-party components retain their own licenses.
+          NOTES
+      - name: Publish release assets
+        run: |
+          set -euo pipefail
+          assets=(release/*.exe release/*.dmg release/*.zip release/SHA256SUMS.txt)
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GH_REPO" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --repo "$GH_REPO" --target "$RELEASE_SHA" --title "ClosedCode ${RELEASE_TAG#v}" --notes-file "$RUNNER_TEMP/closedcode-release-notes.md"
+          fi
