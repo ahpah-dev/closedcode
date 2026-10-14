@@ -192,6 +192,7 @@ jobs:
           assets=(release/*.exe release/*.dmg release/*.zip release/SHA256SUMS.txt)
           if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GH_REPO" --clobber
+            gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --target "$RELEASE_SHA" --draft=false --title "ClosedCode ${RELEASE_TAG#v}" --notes-file "$RUNNER_TEMP/closedcode-release-notes.md" --latest
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" --repo "$GH_REPO" --target "$RELEASE_SHA" --title "ClosedCode ${RELEASE_TAG#v}" --notes-file "$RUNNER_TEMP/closedcode-release-notes.md"
           fi
