@@ -65,6 +65,7 @@
   const architectureChooser = document.querySelector("#architecture-chooser");
   const architectureButtons = [...document.querySelectorAll("[data-architecture]")];
   const alternativeDownload = document.querySelector("#alternative-download");
+  const macVerificationNote = document.querySelector("#mac-verification-note");
   let selectedPlatform = /Mac/i.test(navigator.userAgent) ? "mac" : "windows";
   let selectedArchitecture = "arm64";
   let release = null;
@@ -84,7 +85,11 @@
     const value = platform === "mac" ? config.downloads?.mac?.[selectedArchitecture] : config.downloads?.[platform];
     if (!value || typeof value !== "object") return null;
     const url = safeDownloadUrl(value.url);
-    return url ? { url, name: value.name || "", description: value.description || "", size: value.size || 0 } : null;
+    return url ? { url, name: value.name || decodeURIComponent(new URL(url).pathname.split("/").pop()), description: value.description || "", size: value.size || 0 } : null;
+  }
+
+  function matchesMacArchitecture(name) {
+    return /(?:^|[-_])mac(?:os)?(?:[-_]|$)/i.test(name) && (/universal/i.test(name) || (selectedArchitecture === "arm64" ? /arm64|aarch64/i.test(name) : /x64|x86_64/i.test(name)));
   }
 
   function findAsset(platform) {
@@ -96,6 +101,9 @@
     } else {
       const images = matches.filter((asset) => /\.dmg$/i.test(asset.name));
       selected = images.find((asset) => /universal/i.test(asset.name)) || images.find((asset) => selectedArchitecture === "arm64" ? /arm64|aarch64/i.test(asset.name) : /x64|x86_64/i.test(asset.name));
+      // Cross-built Mac archives are real release assets too. Never mistake a
+      // source archive or Windows ZIP for a Mac app, or guess an unpublished URL.
+      if (!selected) selected = matches.find((asset) => /\.zip$/i.test(asset.name) && matchesMacArchitecture(asset.name));
     }
     if (selected) return { url: selected.browser_download_url, name: selected.name, size: selected.size || 0, description: platform === "windows" ? "Windows · x64" : /arm64|aarch64/i.test(selected.name) ? "macOS 13+ · Apple silicon" : /x64|x86_64/i.test(selected.name) ? "macOS 13+ · Intel" : "macOS 13+ · Universal" };
     return releaseState === "loaded" ? null : configuredDownload(platform);
@@ -115,23 +123,29 @@
     if (asset) {
       downloadLink.href = asset.url;
       downloadLink.setAttribute("aria-disabled", "false");
-      downloadLabel.textContent = `Download for ${name}`;
+      const archive = /\.zip$/i.test(asset.name);
+      downloadLabel.textContent = archive ? `Download ${name} ZIP` : `Download for ${name}`;
       const size = formatSize(asset.size);
-      downloadStatus.textContent = `Published ${/portable/i.test(asset.name) ? "portable app" : "installer"}${size ? ` · ${size}` : ""}${releaseState === "error" ? ". Latest-release check unavailable; this published download remains available." : ". Ready for your next project."}`;
+      downloadStatus.textContent = `Published ${archive ? "ZIP archive" : /portable/i.test(asset.name) ? "portable app" : "installer"}${size ? ` · ${size}` : ""}${releaseState === "error" ? ". Latest-release check unavailable; this published download remains available." : ". Ready for your next project."}`;
     } else {
       downloadLink.removeAttribute("href");
       downloadLink.setAttribute("aria-disabled", "true");
-      downloadLabel.textContent = releaseState === "loading" ? "Checking availability" : `${name} installer unavailable`;
-      downloadStatus.textContent = releaseState === "loading" ? "Checking the latest public GitHub release…" : releaseState === "error" ? "Could not check the latest release. Use All releases to check published assets, or refresh availability." : `No ${name} installer has been published in the latest release. Browse the source or check All releases.`;
+      downloadLabel.textContent = releaseState === "loading" ? "Checking availability" : `${name} download unavailable`;
+      downloadStatus.textContent = releaseState === "loading" ? "Checking the latest public GitHub release…" : releaseState === "error" ? "Could not check the latest release. Use All releases to check published assets, or refresh availability." : `No matching ${name} app download has been published in the latest release. Browse the source or check All releases.`;
     }
     const checksum = release?.assets?.find((item) => /^(?:SHA256SUMS(?:\.txt)?|checksums\.txt)$/i.test(item.name));
     const checksumUrl = safeDownloadUrl(checksum?.browser_download_url) || safeDownloadUrl(config.checksumUrl);
     checksumLink.hidden = !checksumUrl;
     if (checksumUrl) checksumLink.href = checksumUrl;
-    const alternative = release?.assets?.find((item) => safeDownloadUrl(item.browser_download_url) && (selectedPlatform === "windows" ? /portable.*\.exe$/i.test(item.name) : /\.zip$/i.test(item.name) && (selectedArchitecture === "arm64" ? /arm64|aarch64/i.test(item.name) : /x64|x86_64/i.test(item.name))));
+    const alternative = release?.assets?.find((item) => safeDownloadUrl(item.browser_download_url) && safeDownloadUrl(item.browser_download_url) !== safeDownloadUrl(asset?.url) && (selectedPlatform === "windows" ? /portable.*\.exe$/i.test(item.name) : /\.zip$/i.test(item.name) && matchesMacArchitecture(item.name)));
     alternativeDownload.hidden = !alternative;
     if (alternative) { alternativeDownload.href = alternative.browser_download_url; alternativeDownload.childNodes[0].textContent = selectedPlatform === "windows" ? "Portable " : "ZIP archive "; }
     document.querySelector("#unsigned-note").hidden = config.unsigned === false;
+    const nativeVerified = config.macNativeVerified === true || config.macNativeVerified?.[selectedArchitecture] === true;
+    macVerificationNote.hidden = selectedPlatform !== "mac" || !asset || nativeVerified;
+    const buildMethod = typeof config.macBuildMethod === "object" ? config.macBuildMethod?.[selectedArchitecture] : config.macBuildMethod;
+    const verificationText = typeof config.macVerificationNote === "object" ? config.macVerificationNote?.[selectedArchitecture] : config.macVerificationNote;
+    macVerificationNote.textContent = `${buildMethod === "cross-built" ? "Cross-built package. " : ""}${verificationText || "Native Mac smoke testing is pending."}`;
   }
 
   platformButtons.forEach((button) => button.addEventListener("click", () => { selectedPlatform = button.dataset.platform; renderDownload(); }));

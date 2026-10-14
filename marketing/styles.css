@@ -203,6 +203,8 @@ h2 > span { color: #8593ae; }
 .download-secondary .icon { width: 11px; height: 11px; }
 .download-secondary [hidden] { display: none; }
 .unsigned-note { font-size: 8px; color: #53688b; text-align: center; margin-top: 24px; line-height: 1.85; }
+.mac-verification-note { font-size: 8px; color: #8b9ebd; text-align: center; line-height: 1.85; margin-top: 9px; }
+.mac-verification-note[hidden] { display: none; }
 .download-usage-note { font-size: 8px; text-align: center; color: #657da3; line-height: 1.85; margin-top: 10px; padding-top: 13px; border-top: 1px solid rgba(154,184,237,.06); }
 .faq-section { margin-top: 160px; display: grid; grid-template-columns: .85fr 1.25fr; gap: 75px; }
 .faq-heading h2 { font-size: 36px; letter-spacing: -1.2px; }
