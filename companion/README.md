@@ -1,10 +1,10 @@
 # ClosedCode local companion
 
-The companion is a real local Node.js coding-agent backend. It connects the ClosedCode web workspace to files on your computer and to OpenAI-compatible inference providers. It uses only Node built-ins and binds to `127.0.0.1`; it does not send your files to the hosted UI server.
+The companion is a real local Node.js coding-agent backend. It connects the ClosedCode web workspace to files on your computer and to OpenAI-compatible inference providers. It uses Node built-ins and the official MCP client SDK, and binds to `127.0.0.1`; it does not send your files to the hosted UI server.
 
 ## Start and pair
 
-Install Node.js 22.22.2 or later (required by current OmniRoute). From the ClosedCode repository folder, run:
+Install Node.js 22.22.2 or later (required by current OmniRoute). From the ClosedCode repository folder, install dependencies with `npm ci`, then run:
 
 ```sh
 node companion/server.mjs
@@ -66,3 +66,11 @@ Run the integration and security checks with:
 ```sh
 node --test tests/companion*.mjs
 ```
+
+## Automatic routing and MCP (0.2.0)
+
+POST `/api/routing/prepare` with `{ routing }` returns prepared routing, a ready boolean, and safe per-endpoint diagnostics. Set `routing.autoConfigure: true` on `/api/run` for preflight before inference. Installed local model capabilities are discovered; the fallback defaults to `auto`.
+
+GET/POST `/api/mcp/servers` lists/adds servers. POST `/api/mcp/servers/:id/connect` or `/disconnect` explicitly controls connections; PATCH with `{ enabled }` enables/disables, and DELETE removes. Configuration writes require JSON. All endpoints require the companion token and allowed origin. MCP configuration is stored separately from sessions; GET responses omit env/header values. Connections cannot be changed during an active run.
+
+Enable plugin ID `mcp` for main Build runs. MCP approvals use the same `/api/approval` endpoint as commands, with SSE fields `{ type: "approval", kind: "mcp", id, server, tool, args, workspace }`. Calls use a 60-second timeout and are never automatically resubmitted on a lost response.

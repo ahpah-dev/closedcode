@@ -1,6 +1,6 @@
 {
   "name": "closedcode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "engines": {
     "node": ">=22.22.2"
@@ -23,6 +23,7 @@
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@hookform/resolvers": "^5.7.1",
+    "@modelcontextprotocol/client": "2.3.1",
     "@shadcn/react": "^0.3.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
@@ -58,6 +59,7 @@
     "drizzle-kit": "0.31.10",
     "electron": "44.7.2",
     "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
     "eslint": "9.39.4",
     "eslint-config-next": "16.3.4",
     "json-rpc-2.0": "1.7.1",

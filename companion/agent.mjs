@@ -1,6 +1,8 @@
 import { completion, routesFor } from './provider.mjs';
 import { runApprovedCommand } from './commands.mjs';
 import { enforceFreeRoute } from './models.mjs';
+import { prepareRouting } from './routing.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const schema = (name, description, properties, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } });
 const text = { type: 'string' };
@@ -57,15 +59,27 @@ export async function executeTool(name, args, context) {
   throw new Error(`Tool is not available: ${name}`);
 }
 
-export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRounds = 12, allowDelegate = true, routes = routesFor(body), fetchImpl, requestApproval, verifyGatewaySafeguards } = {}) {
+export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRounds = 12, allowDelegate = true, routes = routesFor(body), fetchImpl, requestApproval, verifyGatewaySafeguards, mcp } = {}) {
   if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 32_000) throw new Error('Prompt must contain 1–32,000 characters.');
   const mode = body.mode === 'build' ? 'build' : 'plan';
   const agentName = typeof body.agent === 'object' ? body.agent.name : body.agent;
   const personality = PERSONALITIES[String(agentName || 'nova').toLowerCase()] || PERSONALITIES.nova;
   const definitions = toolset(mode, body.plugins, allowDelegate);
+  const mcpEnabled = Array.isArray(body.plugins) && body.plugins.includes('mcp');
+  const bindings = mode === 'build' && allowDelegate && mcpEnabled && mcp ? mcp.bindings() : new Map();
+  definitions.push(...[...bindings.values()].map((binding) => binding.definition));
+  if (body.routing?.autoConfigure === true) {
+    emit({ type: 'status', text: 'Checking live model catalogs and preparing available routes…' });
+    const prepared = await prepareRouting({ ...body.routing, primary: routes[0], fallbacks: routes.slice(1) }, { signal, fetchImpl, verifyGatewaySafeguards });
+    for (const diagnostic of prepared.diagnostics) emit({ type: 'status', text: `${diagnostic.baseUrl}: ${diagnostic.message}` });
+    if (!prepared.ready) throw new Error(`Automatic configuration could not find a usable route. ${prepared.diagnostics.map((item) => item.message).join(' ')}`);
+    routes = prepared.routes;
+  }
   const history = Array.isArray(body.history) ? body.history.slice(-30).filter((item) => ['user', 'assistant'].includes(item.role) && typeof item.content === 'string').map(({ role, content }) => ({ role, content: content.slice(0, 32_000) })) : [];
   const messages = [{ role: 'system', content: `${personality}\nYou are ClosedCode, a local coding agent working in ${workspace.root}. ${mode === 'build' ? 'Build mode: file edits are authorized by this run. Read relevant files before editing. Preserve unrelated changes. Development commands require explicit user approval for each exact program and argument array. Request relevant verification with run_command when the tool is available.' : 'Plan mode: investigate and propose a plan. You cannot modify files or execute commands.'}\nUse the provided tools for evidence. Never claim commands or tests ran unless the run_command result proves they ran. Credential reads and ignored folders are prohibited for file tools. Do not invent file contents or tool results. Stop when the request is handled and report actual changes and limitations. You may delegate at most two focused read-only investigations.` }, ...history, { role: 'user', content: body.prompt }];
   let routeIndex = 0, delegates = 0, toolCount = 0, totalText = '';
+  const failedTools = new Map();
+  const completedMutations = new Map();
   emit({ type: 'status', text: `${agentName || 'Nova'} is inspecting your workspace in ${mode} mode.`, mode });
   const delegate = async ({ task, agent = 'Echo' }) => {
     if (++delegates > 2) throw new Error('This run has reached its two-subagent limit.');
@@ -78,6 +92,8 @@ export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRo
   for (let round = 0; round < maxRounds; round++) {
     if (signal?.aborted) throw new Error('Run cancelled.');
     let response;
+    let retries = 0;
+    const failures = [];
     let roundStarted = false;
     const emitDelta = (delta) => {
       if (delta && !roundStarted) {
@@ -99,9 +115,18 @@ export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRo
         response = await completion(route, messages, definitions, { signal, timeoutMs, fetchImpl, onDelta: (delta) => { streamedText += delta; emitDelta(delta); } });
         break;
       } catch (error) {
-        if (!error.fallback || routeIndex >= routes.length - 1) throw error;
-        const next = routes[++routeIndex];
         if (streamedText) { emit({ type: 'reset', text: totalText }); roundStarted = false; }
+        if (!error.fallback || signal?.aborted) throw error;
+        failures.push(`${route.baseUrl}: ${error.message}`);
+        if (routeIndex >= routes.length - 1) {
+          if (error.retryable && retries++ < 1) {
+            emit({ type: 'status', text: 'Temporary provider failure. Retrying this response once; completed tools will not be repeated.' });
+            await delay(500, undefined, { signal });
+            continue;
+          }
+          throw new Error(failures.join(' | '));
+        }
+        const next = routes[++routeIndex];
         emit({ type: 'fallback', from: route.baseUrl, to: next.baseUrl, model: next.model, reason: error.message });
       }
     }
@@ -120,11 +145,25 @@ export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRo
         args = JSON.parse(call.function?.arguments || '{}');
         if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Tool arguments must be an object.');
         if (!definitions.some((tool) => tool.function.name === name)) throw new Error('Tool is disabled for this run.');
+        const fingerprint = `${name}:${JSON.stringify(args)}`;
+        if ((failedTools.get(fingerprint) || 0) >= 2) throw new Error('This tool failed twice with the same arguments. Change the approach or stop and explain the blocker.');
         emit({ type: 'tool', name, args: name === 'write_file' ? { path: args.path, bytes: typeof args.content === 'string' ? Buffer.byteLength(args.content) : 0 } : args, state: 'running' });
-        result = await executeTool(name, args, { workspace, mode, delegate: allowDelegate ? delegate : null, signal, requestApproval });
+        const mutation = name === 'write_file' || name === 'run_command' || bindings.has(name);
+        if (mutation && completedMutations.has(fingerprint)) {
+          result = completedMutations.get(fingerprint);
+          emit({ type: 'status', text: 'Identical completed tool request detected. Reusing its result instead of repeating the action.' });
+        } else {
+          result = bindings.has(name)
+            ? await mcp.call(bindings.get(name), args, { signal, requestApproval })
+            : await executeTool(name, args, { workspace, mode, delegate: allowDelegate ? delegate : null, signal, requestApproval });
+          if (mutation) completedMutations.set(fingerprint, result);
+        }
         emit({ type: 'tool', name, state: 'complete', result: name === 'read_file' ? { path: args.path, bytes: result.content.length } : name === 'git_diff' ? { bytes: result.diff.length } : result });
       } catch (error) {
+        const fingerprint = `${name}:${JSON.stringify(args)}`;
+        failedTools.set(fingerprint, (failedTools.get(fingerprint) || 0) + 1);
         result = { error: error.message };
+        if (bindings.has(name)) completedMutations.set(fingerprint, result);
         emit({ type: 'tool', name, state: 'error', error: error.message });
       }
       messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result).slice(0, 512 * 1024) });

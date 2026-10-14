@@ -20,7 +20,7 @@ The app includes its interface, local companion, and a Node.js runtime with npm.
 
 1. Install or open ClosedCode. On macOS, copy the app into Applications.
 2. Choose **Connect project** and select your folder in the native directory picker.
-3. Set up OmniRoute or choose your local Ollama route in **Model routing**.
+3. Open **Model routing → Auto configure**. ClosedCode discovers usable models and prepares your routes. Enter your gateway API key once if OmniRoute requires it.
 4. Pick an agent, choose Build or Plan mode, and send a task.
 
 The release builds are unsigned and are not notarized. Windows SmartScreen and macOS Gatekeeper may show a warning. Every release includes `SHA256SUMS.txt` so you can verify the downloaded files.
@@ -31,7 +31,7 @@ Choose **Start OmniRoute** in setup. ClosedCode uses its bundled Node/npm runtim
 
 Connect an eligible provider in the OmniRoute dashboard, then copy its endpoint API key into ClosedCode's routing settings. The default primary URL is `http://127.0.0.1:20128/v1`; the default model setting is `auto`. Installing a gateway alone does not create a provider account or grant model access.
 
-Each route consists of an OpenAI-compatible base URL, a model, and an optional API key. You can configure a primary route and fallback routes. Failed connections, HTTP 429/408/5xx, and request timeouts move directly to the next eligible route. Authentication failures are reported so you can fix the configuration. The default provider request timeout is 45 seconds.
+Each route consists of an OpenAI-compatible base URL, a model, and an optional API key. You can configure a primary route and fallback routes. Failed connections, HTTP 429/408/5xx, and request timeouts move directly to the next eligible route. Authentication and missing-model failures explain the configuration problem and move to your next configured route. They are not retried. If every route is temporarily unavailable, the last eligible route gets one retry after 500 ms. The default provider request timeout is 45 seconds.
 
 Completed tool rounds survive a route change. If a provider stream fails midway, ClosedCode removes that round's incomplete output before streaming its replacement. The successful replacement route stays selected for the rest of the run. Fallback does not remove provider rate limits or make a slow request instantaneous.
 
@@ -51,13 +51,33 @@ For a localhost OmniRoute gateway, Free Only requires that ClosedCode started it
 
 Pricing evidence comes from the endpoint you configure. Provider eligibility, free allowances, and model availability still apply. ClosedCode does not supply unlimited free hosted inference. Turning Free Only off permits your own paid providers; ClosedCode itself remains free.
 
-For local inference, install [Ollama](https://ollama.com) and download the default fallback model:
+For local inference, install [Ollama](https://ollama.com) and download a model that supports tools and fits your hardware. ClosedCode discovers downloaded models through the live catalog and checks advertised tool capabilities. There is no pinned Qwen 2.5 fallback: the default local model is `auto`. Existing default Qwen 2.5 fallback preferences migrate to discovery. No model weights are downloaded automatically.
 
-```sh
-ollama pull qwen2.5-coder:7b
+Ollama must be running at `http://127.0.0.1:11434/v1`. Choose **Connect local Ollama** to discover and select an installed compatible model in one step.
+
+## Automatic configuration and recovery
+
+**Configure routes automatically before each run** is enabled by default. Preflight discovers each configured endpoint, repairs missing model IDs from its live catalog, excludes incompatible or unverified routes, and selects the first eligible route. **Auto configure** also saves the prepared settings and shows per-route diagnostics. Configuration does not import private Cline credentials or change a gateway started by another application. Gateway setup can still require provider sign-in and an endpoint key.
+
+Temporary failures receive at most one response retry after all configured fallbacks are exhausted. Completed tool rounds survive retry and fallback; incomplete streamed text is discarded. Identical completed mutation requests reuse their result within the run. Repeated tool failures with the same arguments are stopped after two attempts and returned to the model for a changed approach. An external MCP call with a lost reply is never automatically resubmitted. These mechanisms reduce avoidable errors; they cannot guarantee error-free generated code or provider availability.
+
+## MCP servers
+
+Open **Plugins → MCP connections → Add server**. Save one server configuration, then choose **Connect server**. Saving does not execute a command. Supported transports are local stdio and Streamable HTTP; HTTPS is required for remote HTTP servers. The desktop includes its Node/npm runtime for Node and npx servers. Other server executables must be installed separately.
+
+```json
+{
+  "name": "My local server",
+  "transport": "stdio",
+  "command": "node",
+  "args": ["/absolute/path/to/server.mjs"],
+  "env": {}
+}
 ```
 
-Ollama must be running at `http://127.0.0.1:11434/v1`. You can also choose **Use local Ollama route** to make it primary. Local model capability, speed, and hardware requirements vary.
+For HTTP use `{"name":"Remote server","transport":"http","url":"https://your-server.example/mcp","headers":{"Authorization":"Bearer YOUR_TOKEN"}}`. Credentials are kept in private local `mcp.json` and omitted from list responses. Configurations survive restart; connect them explicitly again when reopening the app. Disconnect, disable, and delete controls are available for every server.
+
+Discovered tools have isolated server namespaces. They are available only to the main Build agent with the MCP plugin enabled. Every external tool call pauses for approval of the server, tool and exact arguments. Plan mode and read-only subagents cannot invoke them. MCP servers run with their own permissions and can access resources outside your project. Redirects and automatic tool-call replay are blocked. Shutdown terminates owned local process trees. This release supports MCP tools; resources, prompts, sampling and interactive OAuth are not exposed. Configure static authentication headers when needed.
 
 ## Agents, plugins, and tools
 
@@ -75,10 +95,11 @@ Their guidance is included in actual provider requests. They share the same sele
 Built-in plugin switches control real tools:
 
 - **File Context:** list/read files, Build-mode file edits, and commands that require approval.
+- **MCP servers:** connected external tools with per-call approval in Build mode.
 - **Code Review:** read the current working-tree Git diff.
 - **Subagents:** independent, bounded, read-only investigations. A parent run can delegate twice; children cannot delegate further or execute commands.
 
-Plugins currently consist of the built-in capabilities listed above. Each main run permits at most 12 provider rounds and 24 tool calls. Tool calling depends on the selected model and provider.
+The built-in plugin switches and connected MCP tools form the available tool registry. Each main run permits at most 12 provider rounds and 24 tool calls. Tool calling depends on the selected model and provider.
 
 Development commands pause for your approval of the exact program, arguments, and working directory. Supported programs are Node, npm/npx, Python, Git, Cargo, Go, and Bun; extra language toolchains must be installed separately. Git operations are read-only. Shells and arbitrary executable paths are prohibited. Commands have a 60-second timeout and a 64 KB output limit; rejected approvals start no process, and cancellation stops active commands.
 

@@ -29,6 +29,8 @@ if (!['win32', 'darwin'].includes(platform) || !['x64', 'arm64'].includes(arch))
 
 if (!argv.includes('--skip-build')) {
   await run(process.execPath, [path.join(root, 'scripts', 'build-desktop-ui.mjs')]);
+  await run(process.execPath, [path.join(root, 'scripts', 'build-desktop-engine.mjs')]);
+  await run(process.execPath, [path.join(root, 'scripts', 'generate-license-notices.mjs')]);
   await prepareDesktopResources({ platform, arch });
 }
 if (argv.includes('--run')) {

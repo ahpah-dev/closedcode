@@ -65,3 +65,4 @@ next-env.d.ts
 /marketing/.vercel/
 
 /desktop-ui-dist/
+/desktop-engine/

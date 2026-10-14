@@ -52,13 +52,13 @@ function modelRecord(entry, isLocal, localNames) {
   return record;
 }
 
-async function jsonRequest(url, route, { signal, timeoutMs = 8000, fetchImpl = fetch } = {}) {
+async function jsonRequest(url, route, { signal, timeoutMs = 8000, fetchImpl = fetch, body } = {}) {
   const deadline = AbortSignal.timeout(timeoutMs);
   const abort = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let response;
   try {
-    response = await fetchImpl(url, { signal: abort, headers: route.apiKey ? { Authorization: `Bearer ${route.apiKey}` } : {} });
-    if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(`HTTP ${response.status}`); }
+    response = await fetchImpl(url, { signal: abort, headers: { ...(route.apiKey ? { Authorization: `Bearer ${route.apiKey}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
+    if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(`HTTP ${response.status}${[401, 403].includes(response.status) ? ': enter this gateway’s API key in Model routing; Cline credentials are not shared automatically' : ''}`); }
     const input = await response.text();
     if (input.length > 4 * 1024 * 1024) throw new Error('Catalog exceeded its size limit');
     return JSON.parse(input);
@@ -92,6 +92,17 @@ export async function discoverModels(input, { refresh = false, signal, timeoutMs
         if (typeof model.model === 'string') localNames.add(model.model);
       }
     }
+    const pending = entries.filter((entry) => localNames.has(entry.id)).slice(0, 32);
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+      while (cursor < pending.length) {
+        const entry = pending[cursor++];
+        try {
+          const info = await jsonRequest(new URL('/api/show', base).href, route, { ...options, timeoutMs: Math.min(timeoutMs || 8000, 2000), body: { model: entry.id } });
+          if (Array.isArray(info.capabilities)) entry.capabilities = { ...entry.capabilities, tool_calling: info.capabilities.includes('tools') };
+        } catch (error) { if (signal?.aborted) throw error; }
+      }
+    }));
   } else if (loopback(base) && base.port === '20128' && entries.some((entry) => !entry.pricing)) {
     // OmniRoute's management pricing endpoint is optional. Inference-only keys
     // may lack its manage scope; absence never creates free-price evidence.
@@ -133,7 +144,9 @@ export async function enforceFreeRoute(route, { requireTools = false, verifyGate
   const selected = automatic(route.model) ? eligible.find((model) => model.toolCalling === true) || eligible[0] : eligible.find((model) => model.id === route.model);
   if (!selected) {
     const chosen = catalog.models.find((model) => model.id === route.model);
-    throw new ProviderError(`Free Only blocked ${route.model}: ${chosen?.reason || 'No verified free compatible model is available. Connect a zero-priced model or use downloaded local Ollama.'}`, true);
+    const reason = chosen?.toolCalling === false && requireTools ? 'This model does not support agent tool calls.' : chosen?.reason;
+    const missing = !automatic(route.model) && !chosen ? 'This model ID is absent from the live catalog. Use Auto configure to select an available model.' : 'No verified free compatible model is available. Connect a zero-priced model or download a tool-capable local Ollama model.';
+    throw new ProviderError(`Free Only blocked ${route.model}: ${reason || missing}`, true);
   }
   return { ...route, model: selected.id };
 }

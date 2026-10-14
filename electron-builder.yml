@@ -12,6 +12,7 @@ files:
   - '!desktop/resources/**/*'
   - '!desktop/**/*.test.mjs'
   - companion/**/*.mjs
+  - desktop-engine/**/*.mjs
   - desktop-ui-dist/**/*
   - package.json
   - LICENSE

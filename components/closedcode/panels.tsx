@@ -10,6 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import "./panels.css";
+import { McpPanel } from "./mcp-panel";
 
 export type ProviderRoute = { baseUrl: string; model: string; apiKey: string };
 export type RoutingConfig = {
@@ -17,6 +18,7 @@ export type RoutingConfig = {
   fallbacks: ProviderRoute[];
   autoFallback: boolean;
   freeOnly: boolean;
+  autoConfigure?: boolean;
 };
 export type ConnectionConfig = {
   baseUrl: string;
@@ -114,15 +116,16 @@ export function AgentsPanel({ selectedAgent, onSelect }: { selectedAgent: string
 }
 
 const PLUGINS: { id: string; name: string; subtitle: string; description: string; icon: LucideIcon; color: string; capabilities: string[] }[] = [
+  { id: "mcp", name: "MCP servers", subtitle: "Connect the tools you work with", description: "Give Build agents access to connected MCP tools. Every external tool call asks for your approval.", icon: Network, color: "blue", capabilities: ["Local & HTTP servers", "Approve every tool call"] },
   { id: "file-context", name: "File context", subtitle: "A little context goes a long way", description: "Give your agent tools to list, read, search, and edit files inside your selected project folder.", icon: FolderOpen, color: "sage", capabilities: ["Read & search files", "Workspace-scoped edits"] },
   { id: "code-review", name: "Code review", subtitle: "A second pair of eyes", description: "Let your agent inspect the current Git diff and review changes before you wrap up a task.", icon: GitBranch, color: "violet", capabilities: ["Inspect Git diffs", "Review uncommitted changes"] },
   { id: "subagents", name: "Subagents", subtitle: "Divide the work. Multiply the focus.", description: "Allow up to two focused, read-only investigations by another agent for exploration, review, or debugging. Subagents use your configured model routes.", icon: Users, color: "amber", capabilities: ["Delegate investigations", "Specialized perspectives"] },
 ];
 
-export function PluginsPanel({ enabled, onToggle }: { enabled: string[]; onToggle: (id: string) => void }) {
+export function PluginsPanel({ enabled, onToggle, connection }: { enabled: string[]; onToggle: (id: string) => void; connection: ConnectionConfig }) {
   return (
     <div className="cc-panels">
-      <PanelHeading eyebrow="SMALL TOOLS. BIG POSSIBILITIES." title="Make it your own." description="Give your agents the right tools for the way you work." action={<span className="ccp-pill"><Blocks size={13} />{enabled.filter((id) => PLUGINS.some((plugin) => plugin.id === id)).length} of 3 enabled</span>} />
+      <PanelHeading eyebrow="SMALL TOOLS. BIG POSSIBILITIES." title="Make it your own." description="Give your agents the right tools for the way you work." action={<span className="ccp-pill"><Blocks size={13} />{enabled.filter((id) => PLUGINS.some((plugin) => plugin.id === id)).length} of {PLUGINS.length} enabled</span>} />
       <div className="ccp-section-line"><span>BUILT-IN PLUGINS</span><span>Included with ClosedCode</span></div>
       <div className="ccp-plugins-list">
         {PLUGINS.map((plugin) => {
@@ -138,7 +141,7 @@ export function PluginsPanel({ enabled, onToggle }: { enabled: string[]; onToggl
         })}
       </div>
       <div className="ccp-subtle-note"><ShieldCheck size={17} /><p>These tools run through your local companion. File access stays within your chosen workspace. Plan mode reads and investigates; Build mode allows file edits.</p></div>
-      <div className="ccp-plugin-bottom"><div className="ccp-line-art"><Blocks size={34} strokeWidth={1} /><Plus size={15} /></div><div><h3>Open source, by design.</h3><p>Built-in plugins are part of the source. Extend the companion’s tool registry to add your own workflow.</p></div><span className="ccp-text-pill">Yours to extend<ArrowUpRight size={13} /></span></div>
+      <McpPanel connection={connection} enabled={enabled.includes("mcp")} />
     </div>
   );
 }
@@ -146,7 +149,7 @@ export function PluginsPanel({ enabled, onToggle }: { enabled: string[]; onToggl
 type GatewaySafeguards = { verified: boolean; emergencyFallbackDisabled: boolean; freePoolFailOpenDisabled: boolean };
 type CompanionHealth = { ok: boolean; version?: string; workspace?: string; omniroute?: { baseUrl?: string; dashboardUrl?: string; status?: string; safeguards?: GatewaySafeguards } };
 
-async function companionRequest<T>(connection: ConnectionConfig, path: string, options: { method?: string; body?: unknown; timeout?: number } = {}): Promise<T> {
+export async function companionRequest<T>(connection: ConnectionConfig, path: string, options: { method?: string; body?: unknown; timeout?: number } = {}): Promise<T> {
   let baseUrl: URL;
   try { baseUrl = new URL(connection.baseUrl); } catch { throw new Error("Enter a valid companion URL, such as http://127.0.0.1:47821."); }
   if (!["http:", "https:"].includes(baseUrl.protocol)) throw new Error("The companion URL must start with http:// or https://.");
@@ -188,8 +191,22 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
   const [catalogSafeguards, setCatalogSafeguards] = useState<{ verified: boolean; reason?: string } | null>(null);
   const [catalogError, setCatalogError] = useState("");
   const [modelSearch, setModelSearch] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<{ baseUrl: string; ready: boolean; message: string }[]>([]);
   const latestRouting = useRef(routing);
   useEffect(() => { latestRouting.current = routing; }, [routing]);
+
+  async function autoConfigure(local = false) {
+    setPreparing(true); setCatalogError(""); setDiagnostics([]);
+    const input = local ? { ...routing, primary: { baseUrl: "http://127.0.0.1:11434/v1", model: "auto", apiKey: "" }, fallbacks: [] } : routing;
+    try {
+      const data = await companionRequest<{ ready: boolean; routing: RoutingConfig; diagnostics: { baseUrl: string; ready: boolean; message: string }[] }>(connection, "/api/routing/prepare", { method: "POST", body: { routing: input }, timeout: 60000 });
+      setDiagnostics(data.diagnostics);
+      if (data.ready && latestRouting.current === routing) { onChange(data.routing); setCatalogSource(null); }
+      else if (!data.ready) setCatalogError("No usable route found. Follow the diagnostics below, then configure again.");
+    } catch (error) { setCatalogError(error instanceof Error ? error.message : "Automatic configuration failed."); }
+    finally { setPreparing(false); }
+  }
 
   async function checkHealth() {
     setChecking(true); setProbeError(""); setHealth(null);
@@ -231,6 +248,7 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
   return (
     <div className="cc-panels">
       <PanelHeading eyebrow="MODEL ROUTING" title="One gateway. Zero-cost routes." description="Discover verified free models and keep your coding agent moving." action={<button type="button" className="ccp-button ccp-button--secondary" onClick={onSetup}><Settings2 size={15} />Set up companion</button>} />
+      <section className="ccp-route-card ccp-auto-config"><div className="ccp-card-header"><div><Sparkles size={18} /><h2>Ready when you are.</h2></div><Toggle label="Configure routes automatically before each run" enabled={routing.autoConfigure !== false} onChange={() => onChange({ ...routing, autoConfigure: routing.autoConfigure === false })} /></div><p className="ccp-card-description">Discover installed models, repair missing model IDs, and verify routes before a run. Temporary provider failures get one retry; completed actions are preserved.</p><button className="ccp-button ccp-button--secondary" disabled={preparing || !connection.connected} onClick={() => autoConfigure()}>{preparing ? <LoaderCircle size={14} className="ccp-spin" /> : <Sparkles size={14} />}{preparing ? "Configuring…" : "Auto configure"}</button>{diagnostics.map((item, index) => <p className={item.ready ? "ccp-inline-note" : "ccp-error"} key={index}><strong>{item.baseUrl}</strong> · {item.message}</p>)}</section>
       <section className={`ccp-free-mode ${routing.freeOnly ? "is-protected" : ""}`}><div className="ccp-free-mode-icon"><ShieldCheck size={21} /></div><div><h2>Free models only<span>{routing.freeOnly ? "Protected" : "Off"}</span></h2><p>{routing.freeOnly ? "Only verified zero-cost models or local inference. Paid and unverified routes are blocked, including fallbacks." : "Provider-priced models are allowed. Usage charges depend on your provider account."}</p></div><Toggle label="Free models only" enabled={routing.freeOnly} onChange={() => onChange({ ...routing, freeOnly: !routing.freeOnly, primary: { ...routing.primary, model: !routing.freeOnly && routing.primary.model === "auto" ? "" : routing.primary.model } })} /></section>
       <div className="ccp-routing-summary"><div className="ccp-route-symbol"><Network size={25} strokeWidth={1.4} /></div><div><h2>OmniRoute, built right in.</h2><p>One local gateway for your providers. Add routes below, then let your agent keep going.</p></div><span className="ccp-pill"><span className={`ccp-dot ${connection.connected ? "" : "ccp-dot--neutral"}`} />{connection.connected ? "Companion paired" : "Setup required"}</span></div>
       <div className="ccp-route-flow" aria-label={`Requests use your primary model${routing.autoFallback ? " and then configured fallback models" : " only"}`}><span><Code2 size={17} />Your agent</span><ArrowRight size={17} /><span className="is-gateway"><Network size={17} />OmniRoute</span><ArrowRight size={17} /><span><Sparkles size={17} />Primary model</span>{routing.autoFallback ? <><ArrowRight size={17} /><span className="is-fallback"><GitBranch size={16} />Fallbacks<span className="ccp-count">{routing.fallbacks.length}</span></span></> : null}</div>
@@ -243,11 +261,11 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
         </section>
         <section className="ccp-route-card"><div className="ccp-card-header"><div><span className="ccp-step-badge">02</span><h2>Instant fallback</h2></div><Toggle label="Automatic fallback" enabled={routing.autoFallback} onChange={() => onChange({ ...routing, autoFallback: !routing.autoFallback })} /></div><p className="ccp-card-description">Try the next route when a provider is unavailable, rate limited, or unable to respond. Fallback starts after the provider reports a failure.</p>
           {routing.fallbacks.length ? <div className={`ccp-fallback-list ${routing.autoFallback ? "" : "is-disabled"}`}>{routing.fallbacks.map((fallback, index) => <div className="ccp-fallback-item" key={index}><div className="ccp-fallback-header"><span><GitBranch size={14} />Fallback {index + 1}</span><button type="button" className="ccp-icon-button" aria-label={`Remove fallback ${index + 1}`} onClick={() => onChange({ ...routing, fallbacks: routing.fallbacks.filter((_, itemIndex) => index !== itemIndex) })}><Trash2 size={14} /></button></div><RouteFields route={fallback} label={`Fallback ${index + 1}`} onChange={(value) => onChange({ ...routing, fallbacks: routing.fallbacks.map((item, itemIndex) => itemIndex === index ? value : item) })} /></div>)}</div> : <div className="ccp-empty-fallback"><GitBranch size={20} /><span>A backup gives your agent somewhere to go.</span></div>}
-          <button type="button" className="ccp-add-route" onClick={() => onChange({ ...routing, fallbacks: [...routing.fallbacks, { baseUrl: "http://127.0.0.1:11434/v1", model: "", apiKey: "" }] })}><Plus size={15} />Add fallback route</button>
+          <button type="button" className="ccp-add-route" onClick={() => onChange({ ...routing, fallbacks: [...routing.fallbacks, { baseUrl: "http://127.0.0.1:11434/v1", model: "auto", apiKey: "" }] })}><Plus size={15} />Add fallback route</button>
           {routing.freeOnly ? <p className="ccp-inline-note"><ShieldCheck size={12} />Every fallback must also pass the zero-cost check. No paid route will be used.</p> : null}
           {!routing.autoFallback ? <p className="ccp-inline-note">Automatic fallback is off. Your primary route will handle requests on its own.</p> : null}
         </section>
-      </div><aside className="ccp-routing-aside"><section className="ccp-free-card"><div className="ccp-aside-icon"><Zap size={21} /></div><span className="ccp-eyebrow">FREE BY DEFAULT</span><h2>Your code.<br />Your compute.</h2><p>Choose a verified free provider model, or connect Ollama to discover models already installed on your computer.</p><button type="button" className="ccp-button ccp-button--secondary" onClick={() => onChange({ ...routing, primary: { baseUrl: "http://127.0.0.1:11434/v1", model: "", apiKey: "" } })}><Laptop size={15} />Connect local Ollama<ArrowUpRight size={14} /></button><span className="ccp-helper-text">Local inference uses your hardware. Hosted models can require a provider account and have usage limits; your account does not guarantee free access.</span></section>
+      </div><aside className="ccp-routing-aside"><section className="ccp-free-card"><div className="ccp-aside-icon"><Zap size={21} /></div><span className="ccp-eyebrow">FREE BY DEFAULT</span><h2>Your code.<br />Your compute.</h2><p>Choose a verified free provider model, or connect Ollama to discover models already installed on your computer.</p><button type="button" className="ccp-button ccp-button--secondary" disabled={preparing || !connection.connected} onClick={() => autoConfigure(true)}><Laptop size={15} />Connect local Ollama<ArrowUpRight size={14} /></button><span className="ccp-helper-text">Local inference uses your hardware. Hosted models can require a provider account and have usage limits; your account does not guarantee free access.</span></section>
         <section className="ccp-health-card"><div className="ccp-health-heading"><Radio size={17} /><h3>Companion health</h3></div><p>Check the local service that connects your agents to your workspace.</p><code>{connection.baseUrl || "http://127.0.0.1:47821"}</code><button type="button" className="ccp-button ccp-button--secondary" disabled={checking} onClick={checkHealth}>{checking ? <LoaderCircle size={14} className="ccp-spin" /> : <RefreshCw size={14} />}{checking ? "Checking…" : "Check connection"}</button>{health ? <div className="ccp-health-result" role="status"><CheckCircle2 size={15} /><div>Companion reachable<span>Checked at {checkedAt} · v{health.version || "unknown"}</span><span>OmniRoute: {health.omniroute?.status === "running" ? "running" : "not confirmed"}</span></div></div> : null}{health?.omniroute?.status === "running" && health.omniroute.safeguards?.verified !== true ? <div className="ccp-gateway-warning"><ShieldCheck size={13} /><span>Existing gateway safeguards are unverified. Stop the existing OmniRoute process, then start it through ClosedCode to apply strict fallback settings.</span></div> : null}{probeError ? <div className="ccp-error" role="alert">{probeError}</div> : null}{health && !connection.connected ? <button type="button" className="ccp-text-button" onClick={onSetup}>Pair this companion<ArrowRight size={13} /></button> : null}</section>
         <div className="ccp-local-note"><KeyRound size={15} /><p>Endpoint and model preferences are saved in this browser. Your local companion uses the configured API keys for requests.</p></div>
       </aside></div>

@@ -108,7 +108,7 @@ test('real HTTP routing falls back immediately on 503 and persists provider choi
   assert.match(result.text, /Hello ClosedCode/);
 });
 
-test('429 and network errors fail over; 401 reports a configuration error without another provider', async (t) => {
+test('429, network and authentication failures use configured fallback; authentication is not retried', async (t) => {
   const { workspace } = await fixture(t);
   let fallbackCalls = 0;
   const fallback = await mockServer(t, (_req, res) => { fallbackCalls++; answer(res, { role: 'assistant', content: 'Fallback ready.' }); });
@@ -116,9 +116,12 @@ test('429 and network errors fail over; 401 reports a configuration error withou
   await runAgent({ prompt: 'hi', routing: { primary: { baseUrl: throttle, model: 'x' }, fallbacks: [{ baseUrl: fallback, model: 'y' }] } }, workspace, () => {});
   await runAgent({ prompt: 'hi', routing: { primary: { baseUrl: 'http://127.0.0.1:1/v1', model: 'x' }, fallbacks: [{ baseUrl: fallback, model: 'y' }] } }, workspace, () => {});
   assert.equal(fallbackCalls, 2);
-  const denied = await mockServer(t, (_req, res) => { res.writeHead(401); res.end(); });
-  await assert.rejects(() => runAgent({ prompt: 'hi', routing: { primary: { baseUrl: denied, model: 'x' }, fallbacks: [{ baseUrl: fallback, model: 'y' }] } }, workspace, () => {}), /401/);
-  assert.equal(fallbackCalls, 2);
+  let deniedCalls = 0;
+  const denied = await mockServer(t, (_req, res) => { deniedCalls++; res.writeHead(401); res.end(); });
+  await runAgent({ prompt: 'hi', routing: { primary: { baseUrl: denied, model: 'x' }, fallbacks: [{ baseUrl: fallback, model: 'y' }] } }, workspace, () => {});
+  assert.equal(fallbackCalls, 3); assert.equal(deniedCalls, 1);
+  await assert.rejects(() => runAgent({ prompt: 'hi', routing: { primary: { baseUrl: denied, model: 'x' }, fallbacks: [] } }, workspace, () => {}), /401.*API key/);
+  assert.equal(deniedCalls, 2);
 });
 
 test('provider SSE chunks stream to clients and tool arguments survive split chunks', async (t) => {

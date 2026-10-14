@@ -1,8 +1,8 @@
 export const DEFAULT_PRIMARY = { baseUrl: 'http://127.0.0.1:20128/v1', model: 'auto' };
-export const DEFAULT_FALLBACK = { baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen2.5-coder:7b' };
+export const DEFAULT_FALLBACK = { baseUrl: 'http://127.0.0.1:11434/v1', model: 'auto' };
 
 export class ProviderError extends Error {
-  constructor(message, fallback = false) { super(message); this.fallback = fallback; }
+  constructor(message, fallback = false, retryable = false) { super(message); this.fallback = fallback; this.retryable = retryable; }
 }
 
 export function normalizeRoute(route = {}, fallback = DEFAULT_PRIMARY) {
@@ -30,12 +30,14 @@ export async function completion(route, messages, toolDefinitions, { signal, tim
     });
   } catch (error) {
     if (signal?.aborted) throw new ProviderError('Run cancelled.');
-    throw new ProviderError(timeout.aborted ? 'Provider timed out.' : `Provider connection failed: ${error.message}`, true);
+    throw new ProviderError(timeout.aborted ? 'Provider timed out.' : 'Provider connection failed. Check the endpoint and local service.', true, true);
   }
   if (!response.ok) {
     // Error bodies may contain provider secrets; report only HTTP status.
     await response.body?.cancel().catch(() => {});
-    throw new ProviderError(`Provider returned HTTP ${response.status}.`, response.status === 429 || response.status >= 500 || response.status === 408);
+    const transient = response.status === 429 || response.status >= 500 || response.status === 408;
+    const hint = [401, 403].includes(response.status) ? ' Check this endpoint’s API key and permissions.' : response.status === 404 ? ' Refresh the model catalog and check the endpoint.' : '';
+    throw new ProviderError(`Provider returned HTTP ${response.status}.${hint}`, transient || [401, 403, 404].includes(response.status), transient);
   }
   if (!(response.headers.get('content-type') || '').includes('text/event-stream')) {
     let json;

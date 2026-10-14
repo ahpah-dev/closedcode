@@ -224,3 +224,5 @@
   .ccp-setup-intro h1 { font-size: 24px; }
 }
 @media(prefers-reduced-motion:reduce){.cc-panels,.ccp-modal-backdrop,.ccp-avatar-body,.ccp-agent-guidance{animation:none}.cc-panels button,.ccp-toggle,.ccp-toggle>span{transition:none}.ccp-spin{animation:ccp-spin 2s linear infinite}}
+
+.ccp-mcp-section{margin-top:32px}.ccp-mcp-list{display:grid;gap:16px;margin-top:18px}.ccp-mcp-json{width:100%;min-height:220px;resize:vertical;padding:16px;border:1px solid var(--ccp-border,#333);border-radius:12px;background:rgba(0,0,0,.16);color:inherit;font:12px/1.7 monospace}.ccp-mcp-actions{display:flex;align-items:center;gap:16px;margin-top:16px;flex-wrap:wrap}.ccp-mcp-address{display:block;font-size:12px;overflow-wrap:anywhere;padding:12px 0}.ccp-mcp-tools{display:grid;gap:12px;list-style:none;padding:16px 0}.ccp-mcp-tools li{display:grid;gap:4px}.ccp-mcp-tools span{font-size:12px;opacity:.65}.ccp-auto-config{margin-bottom:20px}.ccp-auto-config .ccp-error,.ccp-auto-config .ccp-inline-note{overflow-wrap:anywhere}

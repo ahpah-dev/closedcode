@@ -8,11 +8,13 @@ import { Workspace } from './workspace.mjs';
 import { runAgent } from './agent.mjs';
 import { DEFAULT_PRIMARY } from './provider.mjs';
 import { discoverModels } from './models.mjs';
+import { prepareRouting } from './routing.mjs';
+import { McpManager } from './mcp.mjs';
 import { trustedNodeExecutable } from './commands.mjs';
 import { stopOwnedProcessTree } from './processes.mjs';
 import { MAX_LOCAL_SESSIONS, MAX_SESSION_BODY_BYTES, createLocalSession, listLocalSessions, normalizeSavedSession, parseLocalSessionPayload, validateLocalSessionId } from './sessions.mjs';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const PRODUCTION_ORIGIN = 'https://closedcode-agent-workspace.vtbyx49kb2.chatgpt.site';
 const DASHBOARD = 'http://127.0.0.1:20128';
 
@@ -92,6 +94,8 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
   const workspace = new Workspace(root);
   try { await workspace.select(saved.workspace || root); }
   catch { await workspace.select(root); }
+  const mcp = new McpManager(stateDir, () => workspace.root);
+  await mcp.load();
   let sessions = Array.isArray(saved.sessions) ? saved.sessions.slice(-MAX_LOCAL_SESSIONS).map((item) => normalizeSavedSession(item, workspace.root)).filter(Boolean) : [];
   const legacyModes = new Map();
   for (const item of Array.isArray(saved.sessions) ? saved.sessions : []) {
@@ -176,6 +180,20 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
         return json(200, { ok: true, workspace: workspace.root });
       }
       if (!sameToken(bearer, token)) return json(401, { error: 'Pair with the companion token before accessing this endpoint.' });
+      if (url.pathname === '/api/mcp/servers' && req.method === 'GET') return json(200, { servers: mcp.list() });
+      if (url.pathname.startsWith('/api/mcp/') && activeRun && req.method !== 'GET') return json(409, { error: 'Wait for the active run before changing MCP connections.' });
+      if (url.pathname === '/api/mcp/servers' && req.method === 'POST') return json(201, { server: await mcp.add(await bodyJson(req, true)) });
+      const mcpMatch = /^\/api\/mcp\/servers\/([a-f0-9]{16})(?:\/(connect|disconnect))?$/.exec(url.pathname);
+      if (mcpMatch) {
+        const [, id, action] = mcpMatch;
+        if (req.method === 'DELETE' && !action) { await mcp.remove(id); return json(200, { ok: true }); }
+        if (req.method === 'PATCH' && !action) { const input = await bodyJson(req, true); await mcp.setEnabled(id, input.enabled); return json(200, { servers: mcp.list() }); }
+        if (req.method === 'POST' && action) { await bodyJson(req, true); await mcp[action](id); return json(200, { servers: mcp.list() }); }
+      }
+      if (url.pathname === '/api/routing/prepare' && req.method === 'POST') {
+        const body = await bodyJson(req, true);
+        return json(200, await prepareRouting(body.routing || {}, { verifyGatewaySafeguards: () => !!omniProcess }));
+      }
       if (url.pathname === '/api/sessions' && req.method === 'GET') return json(200, { sessions: listLocalSessions(sessions) });
       if (url.pathname === '/api/sessions' && req.method === 'POST') {
         if (sessions.length >= MAX_LOCAL_SESSIONS) return json(409, { error: `Local history is limited to ${MAX_LOCAL_SESSIONS} sessions. Delete a session before creating another.` });
@@ -276,7 +294,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
           emit({ type: 'approval', id, ...command });
         });
         const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': heartbeat\n\n'); }, 15_000);
-        try { await runAgent(body, workspace, emit, { signal: controller.signal, timeoutMs: providerTimeoutMs, requestApproval, verifyGatewaySafeguards: () => !!omniProcess }); }
+        try { await runAgent(body, workspace, emit, { signal: controller.signal, timeoutMs: providerTimeoutMs, requestApproval, verifyGatewaySafeguards: () => !!omniProcess, mcp }); }
         catch (error) { emit({ type: 'error', error: error.message }); }
         finally { clearInterval(heartbeat); activeRun = false; res.end(); }
         return;
@@ -297,6 +315,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       server.closeAllConnections();
       closePromise = Promise.all([
         stopOwnedProcessTree(omniProcess),
+        mcp.close(),
         new Promise((resolve) => server.close(resolve)),
         persistence.catch(() => {}),
       ]).then(() => {});

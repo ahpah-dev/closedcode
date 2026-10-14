@@ -4,12 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createCompanion } from '../companion/server.mjs';
 import { serveDesktop, listenLocal } from './static-server.mjs';
 import { externalUrlAllowed, trustedFrame } from './security.mjs';
 
 app.setName('ClosedCode');
 app.setAppUserModelId('com.closedcode.app');
+const { createCompanion } = await import(app.isPackaged ? '../desktop-engine/server.mjs' : '../companion/server.mjs');
 const smoke = process.argv.includes('--desktop-smoke');
 const argument = (name) => process.argv.find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1);
 if (smoke && argument('--desktop-smoke-state')) {
