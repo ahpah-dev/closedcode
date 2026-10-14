@@ -83,7 +83,20 @@ async function smokeChecks() {
   if (created.session?.id) await fetch(`${connection.baseUrl}/api/sessions/${created.session.id}`, { method: 'DELETE', headers });
   const runtime = await execFileAsync(nodeExecutable, ['--version'], { windowsHide: true, timeout: 10_000 });
   const npm = await execFileAsync(nodeExecutable, [npmCli, '--version'], { windowsHide: true, timeout: 10_000 });
-  const result = { ok: !!rendered.workspace && !!rendered.bridge && bridge.desktop === true && health.ok && files.ok && create.ok && history.ok && !rendered.rendererNodeAvailable, packaged: app.isPackaged, version: app.getVersion(), uiLoaded: !!rendered.workspace, bridge: bridge.desktop === true, rendererNodeAvailable: !!rendered.rendererNodeAvailable, healthStatus: health.status, historyStatus: history.status, fileCount: fileData.files?.length || 0, nodeVersion: runtime.stdout.trim(), npmVersion: npm.stdout.trim() };
+  const fixture = path.join(companion.workspace.root, 'mcp-smoke.mjs');
+  await fs.writeFile(fixture, `import readline from 'node:readline'; const lines=readline.createInterface({input:process.stdin}); lines.on('line',line=>{const r=JSON.parse(line);if(r.id===undefined)return;const result=r.method==='initialize'?{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'packaged-smoke',version:'1'}}:r.method==='tools/list'?{tools:[{name:'check',inputSchema:{type:'object',properties:{}}}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,result})+'\\n');});lines.on('close',()=>process.exit(0));`);
+  const added = await fetch(`${connection.baseUrl}/api/mcp/servers`, { method: 'POST', headers, body: JSON.stringify({ name: 'Packaged MCP smoke', command: 'node', args: [fixture] }) });
+  const addedData = await added.json(); let mcpVerified = false;
+  if (addedData.server?.id) {
+    const url = `${connection.baseUrl}/api/mcp/servers/${addedData.server.id}`;
+    try {
+      const connected = await fetch(`${url}/connect`, { method: 'POST', headers, body: '{}' });
+      const data = await connected.json();
+      mcpVerified = connected.ok && data.servers?.some((server) => server.id === addedData.server.id && server.status === 'connected' && server.tools.some((tool) => tool.name === 'check'));
+    } finally { await fetch(url, { method: 'DELETE', headers }); }
+  }
+  await fs.unlink(fixture);
+  const result = { ok: !!rendered.workspace && !!rendered.bridge && bridge.desktop === true && health.ok && files.ok && create.ok && history.ok && mcpVerified && !rendered.rendererNodeAvailable, packaged: app.isPackaged, version: app.getVersion(), uiLoaded: !!rendered.workspace, bridge: bridge.desktop === true, rendererNodeAvailable: !!rendered.rendererNodeAvailable, healthStatus: health.status, historyStatus: history.status, mcpVerified, fileCount: fileData.files?.length || 0, nodeVersion: runtime.stdout.trim(), npmVersion: npm.stdout.trim() };
   const screenshot = argument('--desktop-smoke-screenshot');
   if (screenshot) {
     await fs.mkdir(path.dirname(path.resolve(screenshot)), { recursive: true });
