@@ -5,7 +5,9 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const directories = new Set(Object.keys(pkg.dependencies).concat(['electron']).map((name) => path.join(root, 'node_modules', name)));
 const meta = JSON.parse(await fs.readFile(path.join(root, 'desktop-engine/metafile.json'), 'utf8'));
-for (const input of Object.keys(meta.inputs).filter((name) => name.startsWith('node_modules/'))) {
+let uiModules = [];
+try { uiModules = JSON.parse(await fs.readFile(path.join(root, 'desktop-ui-dist/licenses/modules.json'), 'utf8')); } catch {}
+for (const input of [...Object.keys(meta.inputs), ...uiModules].filter((name) => name.startsWith('node_modules/'))) {
   let directory = path.dirname(path.join(root, input));
   while (directory.startsWith(path.join(root, 'node_modules') + path.sep)) {
     try { await fs.access(path.join(directory, 'package.json')); directories.add(directory); break; } catch {}

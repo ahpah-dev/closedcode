@@ -9,8 +9,7 @@ export async function prepareRouting(routing = {}, options = {}) {
   for (const route of candidates) {
     if (options.signal?.aborted) throw new ProviderError('Run cancelled.');
     try {
-      const verifiedGateway = options.verifyGatewaySafeguards?.(route) === true;
-      const catalog = await discoverModels(route, { ...options, refresh: true, gatewaySafeguardsVerified: verifiedGateway });
+      const catalog = await discoverModels(route, { ...options, refresh: true });
       const requested = catalog.models.find((model) => model.id === route.model);
       // Repair a stale/missing choice, but never silently replace a listed paid
       // model with permission to charge. Enforcement still checks every call.

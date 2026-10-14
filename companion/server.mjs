@@ -8,13 +8,15 @@ import { Workspace } from './workspace.mjs';
 import { runAgent } from './agent.mjs';
 import { DEFAULT_PRIMARY } from './provider.mjs';
 import { discoverModels } from './models.mjs';
+import { verifyOmniRoute, configureOmniRoute } from './gateway.mjs';
 import { prepareRouting } from './routing.mjs';
 import { McpManager } from './mcp.mjs';
+import { AgentStore } from './agents.mjs';
 import { trustedNodeExecutable } from './commands.mjs';
 import { stopOwnedProcessTree } from './processes.mjs';
 import { MAX_LOCAL_SESSIONS, MAX_SESSION_BODY_BYTES, createLocalSession, listLocalSessions, normalizeSavedSession, parseLocalSessionPayload, validateLocalSessionId } from './sessions.mjs';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const PRODUCTION_ORIGIN = 'https://closedcode-agent-workspace.vtbyx49kb2.chatgpt.site';
 const DASHBOARD = 'http://127.0.0.1:20128';
 
@@ -96,6 +98,8 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
   catch { await workspace.select(root); }
   const mcp = new McpManager(stateDir, () => workspace.root);
   await mcp.load();
+  const agents = new AgentStore(stateDir);
+  await agents.load();
   let sessions = Array.isArray(saved.sessions) ? saved.sessions.slice(-MAX_LOCAL_SESSIONS).map((item) => normalizeSavedSession(item, workspace.root)).filter(Boolean) : [];
   const legacyModes = new Map();
   for (const item of Array.isArray(saved.sessions) ? saved.sessions : []) {
@@ -129,9 +133,9 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
   };
   const bootstrap = async () => {
     if (closing) throw Object.assign(new Error('Companion is shutting down.'), { status: 503 });
-    if (await omniRunning()) return { ok: true, status: 'running', dashboardUrl: DASHBOARD, safeguards: { verified: !!omniProcess, emergencyFallbackDisabled: !!omniProcess, freePoolFailOpenDisabled: !!omniProcess } };
+    if (await omniRunning()) return { ok: true, status: 'running', dashboardUrl: DASHBOARD, safeguards: await verifyOmniRoute(DEFAULT_PRIMARY) };
     if (closing) throw Object.assign(new Error('Companion is shutting down.'), { status: 503 });
-    if (omniStarting || omniProcess) return { ok: true, status: 'starting', dashboardUrl: DASHBOARD, safeguards: { verified: true, emergencyFallbackDisabled: true, freePoolFailOpenDisabled: true } };
+    if (omniStarting || omniProcess) return { ok: true, status: 'starting', dashboardUrl: DASHBOARD };
     if (Date.now() - lastOmniAttempt < 15_000) throw Object.assign(new Error('OmniRoute setup was just attempted. Wait 15 seconds before retrying.'), { status: 429 });
     lastOmniAttempt = Date.now();
     omniStarting = true;
@@ -146,7 +150,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       omniProcess.stderr.on('data', (chunk) => process.stderr.write(chunk));
       omniProcess.on('error', (error) => { omniFailure = error.message; omniProcess = null; omniStarting = false; });
       omniProcess.on('close', (code) => { omniFailure = code ? `OmniRoute exited with code ${code}.` : null; omniProcess = null; omniStarting = false; });
-      return { ok: true, status: 'starting', dashboardUrl: DASHBOARD, safeguards: { verified: true, emergencyFallbackDisabled: true, freePoolFailOpenDisabled: true } };
+      return { ok: true, status: 'starting', dashboardUrl: DASHBOARD };
     } finally { omniStarting = false; }
   };
   const server = http.createServer(async (req, res) => {
@@ -172,7 +176,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : req.headers['x-closedcode-token'];
       if (url.pathname === '/api/health' && req.method === 'GET' && (!strictOrigin || sameToken(bearer, token))) {
         const running = await omniRunning();
-        return json(200, { ok: true, version: VERSION, workspace: workspace.root, omniroute: { baseUrl: DEFAULT_PRIMARY.baseUrl, dashboardUrl: DASHBOARD, status: running ? 'running' : omniProcess ? 'starting' : 'unknown', safeguards: { verified: !!omniProcess, emergencyFallbackDisabled: !!omniProcess, freePoolFailOpenDisabled: !!omniProcess }, ...(omniFailure ? { error: omniFailure } : {}) } });
+        return json(200, { ok: true, version: VERSION, workspace: workspace.root, omniroute: { baseUrl: DEFAULT_PRIMARY.baseUrl, dashboardUrl: DASHBOARD, status: running ? 'running' : omniProcess ? 'starting' : 'unknown', ...(omniFailure ? { error: omniFailure } : {}) } });
       }
       if (url.pathname === '/api/pair' && req.method === 'POST') {
         const body = await bodyJson(req);
@@ -180,6 +184,16 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
         return json(200, { ok: true, workspace: workspace.root });
       }
       if (!sameToken(bearer, token)) return json(401, { error: 'Pair with the companion token before accessing this endpoint.' });
+      if (url.pathname === '/api/agents' && req.method === 'GET') return json(200, { agents: agents.list() });
+      if (url.pathname.startsWith('/api/agents') && activeRun && req.method !== 'GET') return json(409, { error: 'Wait for the active run before changing custom agents.' });
+      if (url.pathname === '/api/agents' && req.method === 'POST') return json(201, { agents: await agents.save(await bodyJson(req, true)) });
+      const agentMatch = /^\/api\/agents\/(custom_[a-f0-9-]{36})$/.exec(url.pathname);
+      if (agentMatch && req.method === 'PATCH') {
+        const input = await bodyJson(req, true);
+        if (input?.id !== agentMatch[1]) return json(400, { error: 'An agent identifier cannot be changed.' });
+        return json(200, { agents: await agents.save(input, true) });
+      }
+      if (agentMatch && req.method === 'DELETE') return json(200, { agents: await agents.remove(agentMatch[1]) });
       if (url.pathname === '/api/mcp/servers' && req.method === 'GET') return json(200, { servers: mcp.list() });
       if (url.pathname.startsWith('/api/mcp/') && activeRun && req.method !== 'GET') return json(409, { error: 'Wait for the active run before changing MCP connections.' });
       if (url.pathname === '/api/mcp/servers' && req.method === 'POST') return json(201, { server: await mcp.add(await bodyJson(req, true)) });
@@ -192,7 +206,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       }
       if (url.pathname === '/api/routing/prepare' && req.method === 'POST') {
         const body = await bodyJson(req, true);
-        return json(200, await prepareRouting(body.routing || {}, { verifyGatewaySafeguards: () => !!omniProcess }));
+        return json(200, await prepareRouting(body.routing || {}));
       }
       if (url.pathname === '/api/sessions' && req.method === 'GET') return json(200, { sessions: listLocalSessions(sessions) });
       if (url.pathname === '/api/sessions' && req.method === 'POST') {
@@ -243,6 +257,13 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
         await bodyJson(req);
         return json(200, await bootstrap());
       }
+      if (url.pathname === '/api/omniroute/safeguards' && req.method === 'POST') {
+        if (activeRun) return json(409, { error: 'Wait for the active run before configuring gateway safeguards.' });
+        const body = await bodyJson(req, true);
+        if (!body || typeof body !== 'object' || (body.configure !== undefined && typeof body.configure !== 'boolean')) return json(400, { error: 'Safeguard configuration must be a boolean.' });
+        const safeguards = await (body.configure === true ? configureOmniRoute : verifyOmniRoute)(body.route || DEFAULT_PRIMARY);
+        return json(200, { safeguards });
+      }
       if (url.pathname === '/api/session' && req.method === 'GET') return json(200, { sessions: sessions.map((session) => ({ ...session, mode: legacyModes.get(session.id) || 'plan' })) });
       if (url.pathname === '/api/session' && req.method === 'POST') {
         const body = await bodyJson(req);
@@ -265,7 +286,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       }
       if (url.pathname === '/api/models' && req.method === 'POST') {
         const body = await bodyJson(req);
-        try { return json(200, await discoverModels(body.route || {}, { refresh: body.refresh === true, gatewaySafeguardsVerified: !!omniProcess })); }
+        try { return json(200, await discoverModels(body.route || {}, { refresh: body.refresh === true })); }
         catch (error) { return json(error.fallback ? 502 : 400, { error: error.message }); }
       }
       if (url.pathname === '/api/run' && req.method === 'POST') {
@@ -294,7 +315,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
           emit({ type: 'approval', id, ...command });
         });
         const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': heartbeat\n\n'); }, 15_000);
-        try { await runAgent(body, workspace, emit, { signal: controller.signal, timeoutMs: providerTimeoutMs, requestApproval, verifyGatewaySafeguards: () => !!omniProcess, mcp }); }
+        try { await runAgent(body, workspace, emit, { signal: controller.signal, timeoutMs: providerTimeoutMs, requestApproval, mcp, agentProfiles: agents.list() }); }
         catch (error) { emit({ type: 'error', error: error.message }); }
         finally { clearInterval(heartbeat); activeRun = false; res.end(); }
         return;
@@ -316,6 +337,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       closePromise = Promise.all([
         stopOwnedProcessTree(omniProcess),
         mcp.close(),
+        agents.pending.catch(() => {}),
         new Promise((resolve) => server.close(resolve)),
         persistence.catch(() => {}),
       ]).then(() => {});

@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { normalizeRoute, DEFAULT_PRIMARY, ProviderError } from './provider.mjs';
+import { isOmniRoute, verifyOmniRoute } from './gateway.mjs';
+export { isOmniRoute } from './gateway.mjs';
 
 const catalogs = new Map();
 const TTL = 30_000;
 const loopback = (url) => ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
 const localOllama = (url) => loopback(url) && url.port === '11434' && url.pathname.replace(/\/$/, '') === '/v1';
-export const isOmniRoute = (route) => { const url = new URL(route.baseUrl); return loopback(url) && url.port === '20128'; };
-const GATEWAY_SAFEGUARD_REASON = 'Restart OmniRoute through ClosedCode setup to verify free-only safeguards.';
 const automatic = (id) => /^auto(?:$|[/:])/i.test(id);
 const numeric = (value) => typeof value === 'number' && Number.isFinite(value) ? value : typeof value === 'string' && value.trim() && Number.isFinite(Number(value)) ? Number(value) : null;
 
@@ -68,12 +68,13 @@ async function jsonRequest(url, route, { signal, timeoutMs = 8000, fetchImpl = f
   }
 }
 
-export async function discoverModels(input, { refresh = false, signal, timeoutMs, fetchImpl, gatewaySafeguardsVerified = false } = {}) {
+export async function discoverModels(input, { refresh = false, signal, timeoutMs, fetchImpl, safeguards: suppliedSafeguards } = {}) {
   const route = normalizeRoute(input, DEFAULT_PRIMARY);
+  const safeguards = isOmniRoute(route) ? suppliedSafeguards || await verifyOmniRoute(route, { signal, fetchImpl }) : undefined;
   const key = createHash('sha256').update(`${route.baseUrl}\0${route.apiKey}`).digest('hex');
   let catalog = catalogs.get(key);
   if (!refresh && catalog && Date.now() - catalog.timestamp < TTL) {
-    return summarize(catalog, route, gatewaySafeguardsVerified);
+    return summarize(catalog, route, safeguards);
   }
   const base = new URL(route.baseUrl);
   const isLocal = localOllama(base);
@@ -127,19 +128,23 @@ export async function discoverModels(input, { refresh = false, signal, timeoutMs
   catalog = { models: [...deduped.values()], timestamp: Date.now(), source: modelsUrl.href };
   if (catalogs.size >= 100) catalogs.delete(catalogs.keys().next().value);
   catalogs.set(key, catalog);
-  return summarize(catalog, route, gatewaySafeguardsVerified);
+  return summarize(catalog, route, safeguards);
 }
 
-function summarize(catalog, route, gatewaySafeguardsVerified) {
+function summarize(catalog, route, safeguards) {
   const eligible = catalog.models.filter((model) => model.free && model.compatible);
   const selected = automatic(route.model) || route.model === 'auto' ? eligible.find((model) => model.toolCalling === true)?.id || eligible[0]?.id : eligible.find((model) => model.id === route.model)?.id;
-  return { models: catalog.models, ...(selected ? { selected } : {}), checkedAt: new Date(catalog.timestamp).toISOString(), source: catalog.source, ...(isOmniRoute(route) ? { safeguards: { verified: gatewaySafeguardsVerified, reason: gatewaySafeguardsVerified ? 'Gateway was started by ClosedCode with internal emergency fallback and free-pool fail-open disabled.' : GATEWAY_SAFEGUARD_REASON } } : {}) };
+  return { models: catalog.models, ...(selected ? { selected } : {}), checkedAt: new Date(catalog.timestamp).toISOString(), source: catalog.source, ...(safeguards ? { safeguards } : {}) };
 }
 
 export async function enforceFreeRoute(route, { requireTools = false, verifyGatewaySafeguards, ...options } = {}) {
-  const gatewaySafeguardsVerified = typeof verifyGatewaySafeguards === 'function' && verifyGatewaySafeguards(route) === true;
-  if (isOmniRoute(route) && !gatewaySafeguardsVerified) throw new ProviderError(GATEWAY_SAFEGUARD_REASON, true);
-  const catalog = await discoverModels(route, { ...options, gatewaySafeguardsVerified });
+  let safeguards;
+  if (isOmniRoute(route)) {
+    const result = verifyGatewaySafeguards ? await verifyGatewaySafeguards(route) : await verifyOmniRoute(route, options);
+    safeguards = result === true ? { verified: true } : result;
+    if (!safeguards?.verified) throw new ProviderError(safeguards?.reason || 'OmniRoute safeguards are unverified. Open Model routing and Verify gateway.', true);
+  }
+  const catalog = await discoverModels(route, { ...options, safeguards });
   const eligible = catalog.models.filter((model) => model.free && model.compatible && (!requireTools || model.toolCalling !== false));
   const selected = automatic(route.model) ? eligible.find((model) => model.toolCalling === true) || eligible[0] : eligible.find((model) => model.id === route.model);
   if (!selected) {

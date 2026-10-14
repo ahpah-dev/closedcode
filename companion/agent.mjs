@@ -59,11 +59,14 @@ export async function executeTool(name, args, context) {
   throw new Error(`Tool is not available: ${name}`);
 }
 
-export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRounds = 12, allowDelegate = true, routes = routesFor(body), fetchImpl, requestApproval, verifyGatewaySafeguards, mcp } = {}) {
+export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRounds = 12, allowDelegate = true, routes = routesFor(body), fetchImpl, requestApproval, verifyGatewaySafeguards, mcp, agentProfiles = [] } = {}) {
   if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 32_000) throw new Error('Prompt must contain 1–32,000 characters.');
   const mode = body.mode === 'build' ? 'build' : 'plan';
-  const agentName = typeof body.agent === 'object' ? body.agent.name : body.agent;
-  const personality = PERSONALITIES[String(agentName || 'nova').toLowerCase()] || PERSONALITIES.nova;
+  const requestedAgent = typeof body.agent === 'object' ? body.agent.name : body.agent;
+  const profile = agentProfiles.find((item) => item.id === requestedAgent || item.name.toLowerCase() === String(requestedAgent || '').toLowerCase());
+  if (String(requestedAgent).startsWith('custom_') && !profile) throw new Error('This custom agent is unavailable. Reconnect your companion or select another agent.');
+  const agentName = profile?.name || requestedAgent;
+  const personality = profile ? `You are ${profile.name}, a ${profile.role}.\nPersonality: ${profile.personality}\nYour custom instructions:\n${profile.guidance}` : PERSONALITIES[String(agentName || 'nova').toLowerCase()] || PERSONALITIES.nova;
   const definitions = toolset(mode, body.plugins, allowDelegate);
   const mcpEnabled = Array.isArray(body.plugins) && body.plugins.includes('mcp');
   const bindings = mode === 'build' && allowDelegate && mcpEnabled && mcp ? mcp.bindings() : new Map();
@@ -86,7 +89,7 @@ export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRo
     if (typeof task !== 'string' || !task.trim() || task.length > 12_000) throw new Error('Subagent task must contain 1–12,000 characters.');
     const result = await runAgent({ ...body, prompt: task, agent, mode: 'plan', history: [] }, workspace, (event) => {
       if (event.type === 'status' || event.type === 'tool') emit({ ...event, subagent: agent });
-    }, { signal, timeoutMs, maxRounds: 4, allowDelegate: false, routes: routes.slice(routeIndex), fetchImpl, verifyGatewaySafeguards });
+    }, { signal, timeoutMs, maxRounds: 4, allowDelegate: false, routes: routes.slice(routeIndex), fetchImpl, verifyGatewaySafeguards, agentProfiles });
     return result.text;
   };
   for (let round = 0; round < maxRounds; round++) {

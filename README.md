@@ -88,7 +88,11 @@ Discovered tools have isolated server namespaces. They are available only to the
 | Sage | Thoughtful reviewer for correctness, maintainability, and edge cases |
 | Echo | Precise debugger for tracing root causes and explaining fixes |
 
-Their guidance is included in actual provider requests. They share the same selected workspace and respect the current mode and enabled tools.
+Choose **Agents → Create agent** to add your own teammate. Set a name, role, personality, description, color, and up to 8,000 characters of instructions. Custom profiles support editing, duplication, and deletion. They persist in the paired local engine’s private `agents.json` file and are cached on the device; profiles created offline sync when you connect a compatible engine. Upgrade the desktop or companion to 0.3.0 before running custom agents.
+
+The conversation’s agent picker includes built-in and custom profiles with search, roles, animated avatars, and keyboard navigation. The model picker searches the live catalog, shows eligible choices, and provides a shortcut to route configuration. Escape dismisses a picker and returns focus to its trigger.
+
+Saved custom personalities and instructions are included in actual provider requests.  They share the same selected workspace and respect the current mode and enabled tools.
 
 **Build** mode can read and write project files. **Plan** mode investigates without modifying files or running commands. The project panel displays real files, and the Activity tab shows tool calls, subagent activity, route changes, and errors. Text attachments add context to a prompt; answers and tool events stream as the agent works. **Stop** cancels the active request.
 
@@ -175,3 +179,7 @@ Original ClosedCode code is released under the [Unlicense](LICENSE). Take it, us
 Third-party software retains its own license terms and notices. Those obligations still apply when redistributing dependencies or bundled runtimes. See [third-party notices](THIRD_PARTY_NOTICES.md) and [collected dependency licenses](THIRD_PARTY_LICENSES.txt).
 
 ClosedCode is independent of OmniRoute, Ollama, Electron, Codex, OpenCode, and rNexa.
+
+### Verify an existing OmniRoute gateway
+
+An existing Cline-connected gateway can be reused without a restart. In **Model routing**, enter its endpoint and API key, then choose **Verify gateway**. The key needs OmniRoute management permission for the runtime settings check. **Enable strict free routing** disables Emergency Fallback for the entire gateway and verifies the effective setting; alternatively disable it in OmniRoute Settings → Feature flags and verify again. Every inference round rechecks the live safeguard. Free Only continues selecting verified zero-cost direct models and blocking paid, unknown and combo routes. Cline credentials are not imported automatically.

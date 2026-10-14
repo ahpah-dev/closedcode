@@ -96,25 +96,30 @@ test('Free Only skips paid fallback before inference and continues to a verified
   assert.match(events.find((event) => event.type === 'fallback' && event.from === paid).reason, /Free Only blocked/);
 });
 
-test('unverified existing OmniRoute is blocked before inference; privately verified owned gateway can run', async (t) => {
+test('existing OmniRoute runs after live verification and blocks again if its safeguard changes', async (t) => {
   const { workspace } = await fixture(t);
-  let requests = 0;
+  let requests = 0, enabled = true;
   const gateway = await mock(t, (req, res) => {
+    if (req.url === '/api/settings/feature-flags') return json(res, { flags: [{ key: 'OMNIROUTE_EMERGENCY_FALLBACK', type: 'boolean', requiresRestart: false, effectiveValue: enabled ? 'true' : 'false' }] });
     if (req.method === 'GET') return json(res, { data: [{ id: 'direct:free' }] });
-    requests++; answer(res, 'Owned free route.');
+    requests++; answer(res, 'Verified free route.');
   });
   const fetchImpl = (url, options) => fetch(new URL(url).href.replace('http://127.0.0.1:20128', new URL(gateway).origin), options);
   const route = { baseUrl: 'http://127.0.0.1:20128/v1', model: 'auto' };
   const discovery = await discoverModels(route, { refresh: true, fetchImpl });
   assert.equal(discovery.models[0].free, true);
   assert.equal(discovery.safeguards.verified, false);
-  await assert.rejects(() => runAgent({ prompt: 'Hi', routing: { freeOnly: true, primary: route, fallbacks: [] } }, workspace, () => {}, { fetchImpl }), /Restart OmniRoute through ClosedCode/);
+  await assert.rejects(() => runAgent({ prompt: 'Hi', routing: { freeOnly: true, primary: route, fallbacks: [] } }, workspace, () => {}, { fetchImpl }), /emergency fallback.*cannot be verified/);
   assert.equal(requests, 0);
-  const result = await runAgent({ prompt: 'Hi', routing: { freeOnly: true, primary: route, fallbacks: [] } }, workspace, () => {}, { fetchImpl, verifyGatewaySafeguards: () => true });
+  enabled = false;
+  const result = await runAgent({ prompt: 'Hi', routing: { freeOnly: true, primary: route, fallbacks: [] } }, workspace, () => {}, { fetchImpl });
   assert.equal(requests, 1);
   assert.equal(result.model, 'direct:free');
-  const safe = await discoverModels(route, { fetchImpl, gatewaySafeguardsVerified: true });
+  const safe = await discoverModels(route, { fetchImpl });
   assert.equal(safe.safeguards.verified, true);
+  enabled = true;
+  await assert.rejects(() => runAgent({ prompt: 'Hi', routing: { freeOnly: true, primary: route, fallbacks: [] } }, workspace, () => {}, { fetchImpl }), /emergency fallback is enabled/);
+  assert.equal(requests, 1);
 });
 
 test('failed catalog verification blocks inference and downloaded local Ollama excludes cloud models', async (t) => {
