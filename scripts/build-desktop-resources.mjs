@@ -72,6 +72,19 @@ export async function prepareDesktopResources({ platform = process.platform, arc
       await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(temporary)} -Force`]);
     } else if (platform === 'win32') {
       await run('unzip', ['-q', archive, '-d', temporary]);
+    } else if (process.platform === 'win32') {
+      // Windows cannot always create Unix symlinks without elevation. Keep
+      // their original metadata for the macOS ZIP writer instead of replacing
+      // links with ordinary files or losing executable permissions.
+      const tar = await import('tar');
+      const entries = [];
+      await tar.list({ file: archive, onReadEntry(entry) {
+        entries.push({ path: entry.path.split('/').slice(1).join('/'), type: entry.type, mode: entry.mode, linkpath: entry.linkpath });
+        entry.resume();
+      } });
+      await tar.extract({ file: archive, cwd: temporary, filter: (_name, entry) => entry.type !== 'SymbolicLink' && entry.type !== 'Link' });
+      const extracted = path.join(temporary, `node-v${NODE_VERSION}-${nodePlatform}-${arch}`);
+      await fs.writeFile(path.join(extracted, 'closedcode-archive-metadata.json'), JSON.stringify(entries));
     } else {
       await run('tar', ['-xzf', archive, '-C', temporary]);
     }
