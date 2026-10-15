@@ -17,7 +17,7 @@ import { trustedNodeExecutable } from './commands.mjs';
 import { stopOwnedProcessTree } from './processes.mjs';
 import { MAX_LOCAL_SESSIONS, MAX_SESSION_BODY_BYTES, createLocalSession, listLocalSessions, normalizeSavedSession, parseLocalSessionPayload, validateLocalSessionId } from './sessions.mjs';
 
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const PRODUCTION_ORIGIN = 'https://closedcode-agent-workspace.vtbyx49kb2.chatgpt.site';
 const DASHBOARD = 'http://127.0.0.1:20128';
 

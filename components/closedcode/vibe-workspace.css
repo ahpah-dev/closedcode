@@ -1,6 +1,6 @@
 .closedcode.closedcode,.closedcode.closedcode.dark,.closedcode.closedcode.system-theme {
   --cc-text:#eeeaf5;--cc-muted:#aaa3b9;--cc-border:rgba(216,205,243,.10);--cc-accent:#c8b8f3;--cc-accent-soft:rgba(182,154,238,.10);
-  color:var(--cc-text);background:radial-gradient(ellipse at 64% 90%,#4c365b26,transparent 48%),radial-gradient(ellipse at 20% 5%,#27354a25,transparent 40%),#0c0d13;
+  color:var(--cc-text);background:linear-gradient(180deg,rgba(5,8,16,.53),rgba(5,8,17,.30) 60%,rgba(5,7,15,.55)),url('/orbital-wallpaper.png') center center / cover fixed,#080b12;
   font-family:Inter,"Segoe UI",sans-serif;letter-spacing:-.012em;
 }
 .closedcode.closedcode button:focus-visible,.closedcode.closedcode a:focus-visible {outline:2px solid #c2afe7;outline-offset:3px}
@@ -32,3 +32,9 @@
 @media(prefers-reduced-motion:reduce){.closedcode.closedcode *,.closedcode.closedcode *:before,.closedcode.closedcode *:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}.closedcode.closedcode .vibe-starters>button:hover{transform:none}}
 
 .closedcode.closedcode .vibe-plan-action{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:10px 13px;margin-bottom:9px;border:1px solid #c2a5df28;border-radius:9px;background:#b89bd70b;color:#c9b4e1;font-size:10px}
+
+/* Keep the orbital horizon visible through Studio's smoked glass surfaces. */
+.closedcode.closedcode:not(.light) .sidebar{background:rgba(9,13,21,.69);border-color:rgba(224,228,255,.10)}
+.closedcode.closedcode:not(.light) .main-content{background:linear-gradient(130deg,rgba(15,18,29,.52),rgba(14,17,28,.39));border-color:rgba(218,225,255,.09)}
+.closedcode.closedcode:not(.light) .vibe-project-panel{background:linear-gradient(145deg,rgba(14,20,33,.70),rgba(11,17,29,.55));border-color:rgba(218,225,255,.10)}
+.closedcode.closedcode:not(.light) .composer{background:linear-gradient(145deg,rgba(183,197,231,.10),rgba(167,182,221,.04));border-color:rgba(214,225,255,.18)}

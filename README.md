@@ -2,6 +2,8 @@
 
 ClosedCode 0.4.0 introduces Studio: a focused glass coding workspace with live activity, direct file review, a project pad, and local preview controls.
 
+0.4.1 restores the original dark space theme: the starfield, blue orbital horizon, and translucent glass panels, with Studio features retained.
+
 ### Work in Studio
 
 1. Connect a project and configure a verified model in **Model routing**. Missing keys, rejected keys, and accepted chat keys without gateway management permission now have separate diagnostics.
