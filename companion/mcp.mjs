@@ -93,7 +93,7 @@ export class McpManager {
   async open(id) {
     const server = this.configs.get(id);
     if (this.closed || !server || !server.enabled) throw new Error('MCP server is unavailable or disabled.');
-    const client = new Client({ name: 'ClosedCode', version: '0.3.0' }, { capabilities: {} });
+    const client = new Client({ name: 'ClosedCode', version: '0.4.0' }, { capabilities: {} });
     let transport;
     try {
       if (server.transport === 'stdio') {

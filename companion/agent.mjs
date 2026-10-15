@@ -48,7 +48,7 @@ export async function executeTool(name, args, context) {
   if (name === 'read_file') return { path: args.path, content: await workspace.read(args.path) };
   if (name === 'write_file') {
     if (mode !== 'build') throw new Error('Plan mode is read-only. Switch to Build mode to edit files.');
-    return workspace.write(args.path, args.content);
+    return context.changes ? context.changes.write(args.path, args.content) : workspace.write(args.path, args.content);
   }
   if (name === 'git_diff') return { diff: await workspace.diff() };
   if (name === 'run_command') {
@@ -59,7 +59,7 @@ export async function executeTool(name, args, context) {
   throw new Error(`Tool is not available: ${name}`);
 }
 
-export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRounds = 12, allowDelegate = true, routes = routesFor(body), fetchImpl, requestApproval, verifyGatewaySafeguards, mcp, agentProfiles = [] } = {}) {
+export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRounds = 12, allowDelegate = true, routes = routesFor(body), fetchImpl, requestApproval, verifyGatewaySafeguards, mcp, agentProfiles = [], changes } = {}) {
   if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 32_000) throw new Error('Prompt must contain 1–32,000 characters.');
   const mode = body.mode === 'build' ? 'build' : 'plan';
   const requestedAgent = typeof body.agent === 'object' ? body.agent.name : body.agent;
@@ -136,7 +136,7 @@ export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRo
     messages.push(response);
     if (response.content) totalText += (totalText ? '\n\n' : '') + response.content;
     if (!response.tool_calls?.length) {
-      const result = { text: totalText, model: routes[routeIndex].model, provider: routes[routeIndex].baseUrl };
+      const result = { text: totalText, model: routes[routeIndex].model, provider: routes[routeIndex].baseUrl, ...(changes ? { runId: changes.id, changeCount: changes.summary().changeCount } : {}) };
       emit({ type: 'done', ...result });
       return result;
     }
@@ -158,7 +158,7 @@ export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRo
         } else {
           result = bindings.has(name)
             ? await mcp.call(bindings.get(name), args, { signal, requestApproval })
-            : await executeTool(name, args, { workspace, mode, delegate: allowDelegate ? delegate : null, signal, requestApproval });
+            : await executeTool(name, args, { workspace, mode, delegate: allowDelegate ? delegate : null, signal, requestApproval, changes });
           if (mutation) completedMutations.set(fingerprint, result);
         }
         emit({ type: 'tool', name, state: 'complete', result: name === 'read_file' ? { path: args.path, bytes: result.content.length } : name === 'git_diff' ? { bytes: result.diff.length } : result });

@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import http from 'node:http';
 import { serveDesktop, listenLocal } from './static-server.mjs';
 import { externalUrlAllowed, trustedFrame } from './security.mjs';
+import { localPreviewUrl } from '../lib/preview-url.mjs';
 
 app.setName('ClosedCode');
 app.setAppUserModelId('com.closedcode.app');
@@ -74,6 +76,7 @@ async function smokeChecks() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const bridge = await window.webContents.executeJavaScript('window.closedcodeDesktop.getConnection().then(({desktop})=>({desktop}))');
+  const previewBridgeVerified = await window.webContents.executeJavaScript("typeof window.closedcodeDesktop.openLocalPreview === 'function'");
   const headers = { Authorization: `Bearer ${companion.token}`, 'Content-Type': 'application/json' };
   const health = await fetch(`${connection.baseUrl}/api/health`, { headers });
   const files = await fetch(`${connection.baseUrl}/api/files`, { headers });
@@ -102,7 +105,31 @@ async function smokeChecks() {
     } finally { await fetch(url, { method: 'DELETE', headers }); }
   }
   await fs.unlink(fixture);
-  const result = { ok: !!rendered.workspace && !!rendered.bridge && bridge.desktop === true && health.ok && files.ok && create.ok && history.ok && mcpVerified && customAgentsVerified && !rendered.rendererNodeAvailable, packaged: app.isPackaged, version: app.getVersion(), uiLoaded: !!rendered.workspace, bridge: bridge.desktop === true, rendererNodeAvailable: !!rendered.rendererNodeAvailable, healthStatus: health.status, historyStatus: history.status, mcpVerified, customAgentsVerified, fileCount: fileData.files?.length || 0, nodeVersion: runtime.stdout.trim(), npmVersion: npm.stdout.trim() };
+  // Exercise packaged inference -> direct file write -> persisted review -> Undo
+  // against a deterministic local fixture. No provider account is contacted.
+  const mockProvider = http.createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'GET') return res.end(JSON.stringify({ data: [{ id: 'packaged-smoke:free', capabilities: { tool_calling: true } }] }));
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const request = JSON.parse(raw);
+    const message = request.messages.some((item) => item.role === 'tool') ? { role: 'assistant', content: 'Packaged file review verified.' } : { role: 'assistant', content: '', tool_calls: [{ id: 'smoke-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'smoke-review.txt', content: 'A bounded desktop review fixture.\n' }) } }] };
+    res.end(JSON.stringify({ choices: [{ message }] }));
+  });
+  let changeReviewVerified = false;
+  try {
+    const providerPort = await listenLocal(mockProvider, 0);
+    const run = await fetch(`${connection.baseUrl}/api/run`, { method: 'POST', headers, body: JSON.stringify({ prompt: 'Write the smoke review fixture.', mode: 'build', plugins: ['file-context'], routing: { freeOnly: true, autoConfigure: true, primary: { baseUrl: `http://127.0.0.1:${providerPort}/v1`, model: 'auto' }, fallbacks: [] } }) });
+    const events = (await run.text()).split('\n').filter((line) => line.startsWith('data:')).map((line) => JSON.parse(line.slice(5)));
+    const completed = events.find((event) => event.type === 'done');
+    if (completed?.runId) {
+      const review = await (await fetch(`${connection.baseUrl}/api/changes/${completed.runId}`, { headers })).json();
+      const undone = await fetch(`${connection.baseUrl}/api/changes/${completed.runId}/undo`, { method: 'POST', headers, body: '{}' });
+      const data = await undone.json();
+      let missing = false; try { await fs.access(path.join(companion.workspace.root, 'smoke-review.txt')); } catch (error) { missing = error.code === 'ENOENT'; }
+      changeReviewVerified = review.run?.files?.[0]?.path === 'smoke-review.txt' && data.run?.status === 'undone' && missing;
+    }
+  } finally { mockProvider.closeAllConnections(); await new Promise((resolve) => mockProvider.close(resolve)); }
+  const result = { ok: !!rendered.workspace && !!rendered.bridge && bridge.desktop === true && health.ok && files.ok && create.ok && history.ok && mcpVerified && customAgentsVerified && changeReviewVerified && previewBridgeVerified && !rendered.rendererNodeAvailable, packaged: app.isPackaged, version: app.getVersion(), uiLoaded: !!rendered.workspace, bridge: bridge.desktop === true, rendererNodeAvailable: !!rendered.rendererNodeAvailable, healthStatus: health.status, historyStatus: history.status, mcpVerified, customAgentsVerified, changeReviewVerified, previewBridgeVerified, fileCount: fileData.files?.length || 0, nodeVersion: runtime.stdout.trim(), npmVersion: npm.stdout.trim() };
   const screenshot = argument('--desktop-smoke-screenshot');
   if (screenshot) {
     await fs.mkdir(path.dirname(path.resolve(screenshot)), { recursive: true });
@@ -144,6 +171,12 @@ else {
     connection = getConnection();
     ipcMain.handle('closedcode:get-connection', (event) => { authorized(event); return getConnection(); });
     ipcMain.handle('closedcode:get-version', (event) => { authorized(event); return app.getVersion(); });
+    ipcMain.handle('closedcode:open-local-preview', async (event, input) => {
+      authorized(event);
+      const url = localPreviewUrl(input, [ui.origin, baseUrl]);
+      await shell.openExternal(url);
+      return { opened: true, url };
+    });
     const chooseProject = async () => {
       const choice = await dialog.showOpenDialog(window, { title: 'Choose your coding project', defaultPath: companion.workspace.root, properties: ['openDirectory', 'createDirectory'] });
       if (choice.canceled || !choice.filePaths[0]) return { workspace: companion.workspace.root, cancelled: true };

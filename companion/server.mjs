@@ -6,17 +6,18 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Workspace } from './workspace.mjs';
 import { runAgent } from './agent.mjs';
-import { DEFAULT_PRIMARY } from './provider.mjs';
+import { DEFAULT_PRIMARY, normalizeRoute } from './provider.mjs';
 import { discoverModels } from './models.mjs';
 import { verifyOmniRoute, configureOmniRoute } from './gateway.mjs';
 import { prepareRouting } from './routing.mjs';
 import { McpManager } from './mcp.mjs';
 import { AgentStore } from './agents.mjs';
+import { ChangeTracker } from './change-tracker.mjs';
 import { trustedNodeExecutable } from './commands.mjs';
 import { stopOwnedProcessTree } from './processes.mjs';
 import { MAX_LOCAL_SESSIONS, MAX_SESSION_BODY_BYTES, createLocalSession, listLocalSessions, normalizeSavedSession, parseLocalSessionPayload, validateLocalSessionId } from './sessions.mjs';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const PRODUCTION_ORIGIN = 'https://closedcode-agent-workspace.vtbyx49kb2.chatgpt.site';
 const DASHBOARD = 'http://127.0.0.1:20128';
 
@@ -100,6 +101,8 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
   await mcp.load();
   const agents = new AgentStore(stateDir);
   await agents.load();
+  const changes = new ChangeTracker(stateDir);
+  await changes.load();
   let sessions = Array.isArray(saved.sessions) ? saved.sessions.slice(-MAX_LOCAL_SESSIONS).map((item) => normalizeSavedSession(item, workspace.root)).filter(Boolean) : [];
   const legacyModes = new Map();
   for (const item of Array.isArray(saved.sessions) ? saved.sessions : []) {
@@ -108,8 +111,9 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
   for (const [id, mode] of Object.entries(saved.legacySessionModes || {})) {
     if (sessions.some((session) => session.id === id) && ['build', 'plan'].includes(mode)) legacyModes.set(id, mode);
   }
-  let activeRun = false, omniProcess = null, omniStarting = false, omniFailure = null, lastOmniAttempt = 0;
+  let activeRun = false, reviewMutation = false, omniProcess = null, omniStarting = false, omniFailure = null, lastOmniAttempt = 0;
   let closing = false, closePromise;
+  let activeRunCompletion = Promise.resolve();
   const pendingApprovals = new Map();
   let persistence = Promise.resolve();
   const persist = () => {
@@ -131,12 +135,23 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       return response.status < 500;
     } catch { return false; }
   };
-  const bootstrap = async () => {
+  const bootstrap = async (body = {}) => {
     if (closing) throw Object.assign(new Error('Companion is shutting down.'), { status: 503 });
-    if (await omniRunning()) return { ok: true, status: 'running', dashboardUrl: DASHBOARD, safeguards: await verifyOmniRoute(DEFAULT_PRIMARY) };
+    const apiKey = typeof body?.apiKey === 'string' ? body.apiKey : (typeof body?.route?.apiKey === 'string' ? body.route.apiKey : '');
+    const route = normalizeRoute(body?.route || (apiKey ? { ...DEFAULT_PRIMARY, apiKey } : DEFAULT_PRIMARY));
+    const shouldConfigure = body?.configure !== false;
+    if (await omniRunning()) {
+      let safeguards;
+      try {
+        safeguards = await (shouldConfigure ? configureOmniRoute(route) : verifyOmniRoute(route));
+      } catch (err) {
+        safeguards = { verified: false, reason: err.message };
+      }
+      return { ok: true, status: 'running', dashboardUrl: DASHBOARD, safeguards };
+    }
     if (closing) throw Object.assign(new Error('Companion is shutting down.'), { status: 503 });
     if (omniStarting || omniProcess) return { ok: true, status: 'starting', dashboardUrl: DASHBOARD };
-    if (Date.now() - lastOmniAttempt < 15_000) throw Object.assign(new Error('OmniRoute setup was just attempted. Wait 15 seconds before retrying.'), { status: 429 });
+    if (Date.now() - lastOmniAttempt < 3_000) return { ok: true, status: 'starting', dashboardUrl: DASHBOARD };
     lastOmniAttempt = Date.now();
     omniStarting = true;
     omniFailure = null;
@@ -150,7 +165,21 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       omniProcess.stderr.on('data', (chunk) => process.stderr.write(chunk));
       omniProcess.on('error', (error) => { omniFailure = error.message; omniProcess = null; omniStarting = false; });
       omniProcess.on('close', (code) => { omniFailure = code ? `OmniRoute exited with code ${code}.` : null; omniProcess = null; omniStarting = false; });
-      return { ok: true, status: 'starting', dashboardUrl: DASHBOARD };
+      const startWait = Date.now();
+      while (Date.now() - startWait < 4000) {
+        await new Promise((r) => setTimeout(r, 400));
+        if (await omniRunning()) {
+          let safeguards;
+          try {
+            safeguards = await (shouldConfigure ? configureOmniRoute(route) : verifyOmniRoute(route));
+          } catch (err) {
+            safeguards = { verified: false, reason: err.message };
+          }
+          return { ok: true, status: 'running', dashboardUrl: DASHBOARD, safeguards };
+        }
+        if (!omniProcess && omniFailure) break;
+      }
+      return { ok: true, status: omniProcess ? 'starting' : 'unknown', dashboardUrl: DASHBOARD, ...(omniFailure ? { error: omniFailure } : {}) };
     } finally { omniStarting = false; }
   };
   const server = http.createServer(async (req, res) => {
@@ -184,6 +213,19 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
         return json(200, { ok: true, workspace: workspace.root });
       }
       if (!sameToken(bearer, token)) return json(401, { error: 'Pair with the companion token before accessing this endpoint.' });
+      if (url.pathname === '/api/changes' && req.method === 'GET') return json(200, { runs: changes.list(workspace) });
+      const changesMatch = /^\/api\/changes\/([a-f0-9]{32})(?:\/(keep|undo))?$/.exec(url.pathname);
+      if (changesMatch && req.method === 'GET' && !changesMatch[2]) return json(200, { run: changes.get(changesMatch[1], workspace) });
+      if (changesMatch && req.method === 'POST' && changesMatch[2]) {
+        if (activeRun || reviewMutation) return json(409, { error: 'Wait for the active run or review action before reviewing changes.' });
+        const input = await bodyJson(req, true);
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) return json(400, { error: 'Review actions accept an empty JSON object; paths and snapshots cannot be supplied.' });
+        // A request body may arrive slowly while another run starts.
+        if (activeRun || reviewMutation) return json(409, { error: 'Wait for the active run or review action before reviewing changes.' });
+        reviewMutation = true;
+        try { return json(200, { run: await changes[changesMatch[2]](changesMatch[1], workspace) }); }
+        finally { reviewMutation = false; }
+      }
       if (url.pathname === '/api/agents' && req.method === 'GET') return json(200, { agents: agents.list() });
       if (url.pathname.startsWith('/api/agents') && activeRun && req.method !== 'GET') return json(409, { error: 'Wait for the active run before changing custom agents.' });
       if (url.pathname === '/api/agents' && req.method === 'POST') return json(201, { agents: await agents.save(await bodyJson(req, true)) });
@@ -247,15 +289,19 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
         return json(200, { path: file, content: await workspace.read(file) });
       }
       if (url.pathname === '/api/workspace' && req.method === 'POST') {
-        if (activeRun) return json(409, { error: 'Wait for the active run to finish before changing workspace.' });
+        if (activeRun || reviewMutation) return json(409, { error: 'Wait for the active run or review action to finish before changing workspace.' });
         const body = await bodyJson(req);
-        await workspace.select(body.path);
-        await persist();
-        return json(200, { ok: true, workspace: workspace.root });
+        if (activeRun || reviewMutation) return json(409, { error: 'Wait for the active run or review action to finish before changing workspace.' });
+        reviewMutation = true;
+        try {
+          await workspace.select(body.path);
+          await persist();
+          return json(200, { ok: true, workspace: workspace.root });
+        } finally { reviewMutation = false; }
       }
       if (url.pathname === '/api/omniroute' && req.method === 'POST') {
-        await bodyJson(req);
-        return json(200, await bootstrap());
+        const body = await bodyJson(req);
+        return json(200, await bootstrap(body));
       }
       if (url.pathname === '/api/omniroute/safeguards' && req.method === 'POST') {
         if (activeRun) return json(409, { error: 'Wait for the active run before configuring gateway safeguards.' });
@@ -290,12 +336,17 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
         catch (error) { return json(error.fallback ? 502 : 400, { error: error.message }); }
       }
       if (url.pathname === '/api/run' && req.method === 'POST') {
-        if (activeRun) return json(409, { error: 'A coding run is already active. Wait for it to finish.' });
+        if (closing) return json(503, { error: 'Companion is shutting down.' });
+        if (activeRun || reviewMutation) return json(409, { error: 'A coding run or review action is already active. Wait for it to finish.' });
         const body = await bodyJson(req);
         if (typeof body.prompt !== 'string' || !body.prompt.trim()) return json(400, { error: 'A prompt is required.' });
+        if (activeRun || reviewMutation) return json(409, { error: 'A coding run or review action is already active. Wait for it to finish.' });
         activeRun = true;
+        let settleRun;
+        activeRunCompletion = new Promise((resolve) => { settleRun = resolve; });
         const controller = new AbortController();
-        res.on('close', () => controller.abort());
+        const abortRun = () => controller.abort();
+        res.once('close', abortRun);
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
         res.flushHeaders();
         const emit = (event) => { if (!res.destroyed) res.write(`event: message\ndata: ${JSON.stringify(event)}\n\n`); };
@@ -315,14 +366,27 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
           emit({ type: 'approval', id, ...command });
         });
         const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': heartbeat\n\n'); }, 15_000);
-        try { await runAgent(body, workspace, emit, { signal: controller.signal, timeoutMs: providerTimeoutMs, requestApproval, mcp, agentProfiles: agents.list() }); }
-        catch (error) { emit({ type: 'error', error: error.message }); }
-        finally { clearInterval(heartbeat); activeRun = false; res.end(); }
+        try {
+          let tracked, doneEvent, runError;
+          try {
+            tracked = await changes.begin(workspace, (summary) => emit({ type: 'changes', ...summary }));
+            emit({ type: 'run', runId: tracked.id, mode: body.mode === 'build' ? 'build' : 'plan' });
+            await runAgent(body, workspace, (event) => { if (event.type === 'done') doneEvent = event; else emit(event); }, { signal: controller.signal, timeoutMs: providerTimeoutMs, requestApproval, mcp, agentProfiles: agents.list(), changes: tracked });
+          } catch (error) { runError = error; }
+          try { if (tracked) await tracked.finish(runError ? controller.signal.aborted ? 'cancelled' : 'error' : 'completed'); }
+          catch (error) { runError ||= error; }
+          if (runError) emit({ type: 'error', error: runError.message, ...(tracked ? { runId: tracked.id, changeCount: tracked.summary().changeCount } : {}) });
+          else if (doneEvent) emit({ ...doneEvent, ...(tracked ? { runId: tracked.id, changeCount: tracked.summary().changeCount } : {}) });
+        } finally {
+          clearInterval(heartbeat); activeRun = false;
+          res.removeListener('close', abortRun); settleRun();
+          if (!res.destroyed) res.end();
+        }
         return;
       }
       return json(404, { error: 'Endpoint not found.' });
     } catch (error) {
-      if (!res.headersSent) json(error.status || (error.code === 'ENOENT' ? 404 : 400), { error: error.message });
+      if (!res.headersSent) json(error.status || (error.code === 'ENOENT' ? 404 : 400), { error: error.message, ...(Array.isArray(error.conflicts) ? { conflicts: error.conflicts } : {}) });
       else res.end();
     }
   });
@@ -338,6 +402,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
         stopOwnedProcessTree(omniProcess),
         mcp.close(),
         agents.pending.catch(() => {}),
+        activeRunCompletion.then(() => changes.pending).catch(() => {}),
         new Promise((resolve) => server.close(resolve)),
         persistence.catch(() => {}),
       ]).then(() => {});

@@ -14,6 +14,7 @@ files:
   - companion/**/*.mjs
   - desktop-engine/**/*.mjs
   - desktop-ui-dist/**/*
+  - lib/preview-url.mjs
   - package.json
   - LICENSE
   - UNLICENSE

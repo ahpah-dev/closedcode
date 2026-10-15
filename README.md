@@ -1,5 +1,17 @@
 # ClosedCode
 
+ClosedCode 0.4.0 introduces Studio: a focused glass coding workspace with live activity, direct file review, a project pad, and local preview controls.
+
+### Work in Studio
+
+1. Connect a project and configure a verified model in **Model routing**. Missing keys, rejected keys, and accepted chat keys without gateway management permission now have separate diagnostics.
+2. Describe your idea, or choose **Plan** to investigate before changing files. **Build this plan** prepares a follow-up prompt for you to review and send.
+3. Follow actual reads, file edits, commands and provider fallbacks in **Activity**. Commands and external MCP tools still require approval.
+4. Open **Changes** to inspect the exact direct agent file edits. **Keep changes** accepts edits already in your workspace; **Undo** restores their saved before-state only when the files have not changed elsewhere. Command and MCP side effects are outside file Undo. These actions do not create Git commits.
+5. Keep workspace-specific notes in **Pad**. Start your own development server and enter its loopback HTTP address in **Preview** to open it in your browser.
+
+The companion keeps a private, bounded review history for the 20 most recent runs. Files are limited to 512 KB of UTF-8 text, with at most 24 changed files and 8 MB of snapshots in a run. Interrupted runs retain their captured direct edits for review. Newer edits, renamed/replaced files, symbolic links and workspace mismatches block Undo.
+
 **Free. Unlimited. Yours.** A standalone coding agent desktop app for Windows and macOS, with a focused workspace, expressive agents, local project tools, OmniRoute setup, and automatic provider fallback.
 
 [Website](https://closedcode-desktop.vercel.app) · [Download releases](https://github.com/ahpah-dev/closedcode/releases) · [Source](https://github.com/ahpah-dev/closedcode)
