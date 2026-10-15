@@ -45,7 +45,7 @@ if (argv.includes('--run')) {
   const screenshot = path.join(root, 'desktop', 'resources', 'smoke', `latest-${platform}-${arch}.png`);
   await fs.mkdir(path.dirname(screenshot), { recursive: true });
   try {
-    await run(executable, ['--desktop-smoke', `--desktop-smoke-state=${path.join(temporary, 'state')}`, `--desktop-smoke-output=${report}`, `--desktop-smoke-screenshot=${screenshot}`], { timeoutMs: 90_000 });
+    await run(executable, ['--desktop-smoke', `--desktop-smoke-arch=${arch}`, `--desktop-smoke-state=${path.join(temporary, 'state')}`, `--desktop-smoke-output=${report}`, `--desktop-smoke-screenshot=${screenshot}`], { timeoutMs: 90_000 });
     const result = JSON.parse(await fs.readFile(report, 'utf8'));
     if (!result.ok || !result.packaged || result.rendererNodeAvailable) throw new Error('Packaged desktop smoke checks failed.');
     console.log(JSON.stringify(result));

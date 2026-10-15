@@ -30,6 +30,8 @@ Get the installers from [GitHub Releases](https://github.com/ahpah-dev/closedcod
 
 The app includes its interface, local companion, and a Node.js runtime with npm. You do not need to install Node.js, run a development server, or paste a pairing token to use the desktop app. Provider accounts, credentials, and model weights are not bundled.
 
+Mac release jobs build only their requested architecture. Packaged verification checks that Electron, bundled Node, and the release target all match before an installer is published.
+
 1. Install or open ClosedCode. On macOS, copy the app into Applications.
 2. Choose **Connect project** and select your folder in the native directory picker.
 3. Open **Model routing → Auto configure**. ClosedCode discovers usable models and prepares your routes. Enter your gateway API key once if OmniRoute requires it.

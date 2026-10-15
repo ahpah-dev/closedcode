@@ -86,6 +86,9 @@ async function smokeChecks() {
   const history = await fetch(`${connection.baseUrl}/api/sessions`, { headers });
   if (created.session?.id) await fetch(`${connection.baseUrl}/api/sessions/${created.session.id}`, { method: 'DELETE', headers });
   const runtime = await execFileAsync(nodeExecutable, ['--version'], { windowsHide: true, timeout: 10_000 });
+  const identityResult = await execFileAsync(nodeExecutable, ['-p', 'JSON.stringify({platform:process.platform,arch:process.arch})'], { windowsHide: true, timeout: 10_000 });
+  const runtimeIdentity = JSON.parse(identityResult.stdout);
+  if (runtimeIdentity.platform !== process.platform || runtimeIdentity.arch !== process.arch || runtimeIdentity.arch !== (argument('--desktop-smoke-arch') || process.arch)) throw new Error('Packaged Electron and Node architectures do not match the requested release.');
   const npm = await execFileAsync(nodeExecutable, [npmCli, '--version'], { windowsHide: true, timeout: 10_000 });
   const customProfile = { id: `custom_${randomUUID()}`, name: 'Desktop smoke agent', role: 'Verifier', color: 'violet', personality: 'Methodical.', guidance: 'Verify actual behavior.', updatedAt: new Date().toISOString() };
   const profileCreated = await fetch(`${connection.baseUrl}/api/agents`, { method: 'POST', headers, body: JSON.stringify(customProfile) });

@@ -65,8 +65,6 @@ mac:
   hardenedRuntime: false
   target:
     - target: dmg
-      arch: [x64, arm64]
     - target: zip
-      arch: [x64, arm64]
   artifactName: ClosedCode-${version}-mac-${arch}.${ext}
 publish: null
