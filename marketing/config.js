@@ -10,20 +10,20 @@ window.CLOSED_CODE_SITE = {
     "windows": {
       "url": "https://github.com/ahpah-dev/closedcode/releases/download/v0.5.0/ClosedCode-0.5.0-win-x64-setup.exe",
       "name": "ClosedCode-0.5.0-win-x64-setup.exe",
-      "size": 140890396,
+      "size": 140892830,
       "description": "Windows · x64"
     },
     "mac": {
       "arm64": {
         "url": "https://github.com/ahpah-dev/closedcode/releases/download/v0.5.0/ClosedCode-0.5.0-mac-arm64.dmg",
         "name": "ClosedCode-0.5.0-mac-arm64.dmg",
-        "size": 184537164,
+        "size": 184559365,
         "description": "macOS 13+ · Apple silicon"
       },
       "x64": {
         "url": "https://github.com/ahpah-dev/closedcode/releases/download/v0.5.0/ClosedCode-0.5.0-mac-x64.dmg",
         "name": "ClosedCode-0.5.0-mac-x64.dmg",
-        "size": 189409095,
+        "size": 189412301,
         "description": "macOS 13+ · Intel"
       }
     }
