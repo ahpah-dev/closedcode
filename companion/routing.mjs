@@ -1,5 +1,5 @@
 import { routesFor, ProviderError } from './provider.mjs';
-import { discoverModels, enforceFreeRoute } from './models.mjs';
+import { discoverModels, enforceFreeRoute, isOmniRoute } from './models.mjs';
 
 // Discovery performs no inference, model downloads, credential scraping or
 // changes to another application's gateway. Every prepared route stays free.
@@ -19,7 +19,21 @@ export async function prepareRouting(routing = {}, options = {}) {
         : { ...candidate, model: candidate.model === 'auto' ? catalog.models.find((model) => model.compatible && model.toolCalling !== false)?.id || '' : candidate.model };
       if (!selected.model || selected.model === 'auto') throw new ProviderError('No compatible model is installed or configured.');
       if (!routes.some((item) => item.baseUrl === selected.baseUrl && item.model === selected.model)) routes.push(selected);
-      diagnostics.push({ baseUrl: route.baseUrl, ready: true, model: selected.model, message: `Selected ${selected.model}${selected.model !== route.model ? ' from the live catalog' : ''}.` });
+      let extraCount = 0;
+      if (routing.freeOnly !== false && routing.autoFallback !== false && isOmniRoute(route) && Array.isArray(catalog.freeFallbacks)) {
+        for (const fallbackModel of catalog.freeFallbacks) {
+          if (fallbackModel && fallbackModel !== selected.model && !routes.some((item) => item.baseUrl === selected.baseUrl && item.model === fallbackModel)) {
+            routes.push({ ...selected, model: fallbackModel });
+            extraCount++;
+          }
+        }
+      }
+      diagnostics.push({
+        baseUrl: route.baseUrl,
+        ready: true,
+        model: selected.model,
+        message: `Selected ${selected.model}${selected.model !== route.model ? ' from the live catalog' : ''}${extraCount > 0 ? ` (+${extraCount} verified free fallback${extraCount > 1 ? 's' : ''})` : ''}.`,
+      });
     } catch (error) {
       if (options.signal?.aborted) throw error;
       diagnostics.push({ baseUrl: route.baseUrl, ready: false, message: error.message });

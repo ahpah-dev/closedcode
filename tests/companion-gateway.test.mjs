@@ -154,3 +154,37 @@ test('one-click OmniRoute setup configures user API key and verifies live safegu
   assert.equal(result.verified, true);
   assert.equal(result.emergencyFallbackDisabled, true);
 });
+
+test('local loopback JWT cookie enables one-click setup for keyless or inference-only OmniRoute while rejecting bad keys', async () => {
+  let fallbackEnabled = true;
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url);
+    const hasCookie = typeof options.headers?.Cookie === 'string' && options.headers.Cookie.startsWith('auth_token=');
+    const auth = options.headers?.Authorization;
+    if (parsed.pathname === '/v1/models') {
+      if (auth === 'Bearer bad-key') return json({ error: 'invalid key' }, 401);
+      return json({ data: [{ id: 'opencode/qwen3.6-plus-free' }] });
+    }
+    if (parsed.pathname === '/api/settings/feature-flags') {
+      if (!hasCookie) return json({ error: 'Authentication required' }, 401);
+      if (options.method === 'PUT') {
+        assert.deepEqual(JSON.parse(options.body), { key: 'OMNIROUTE_EMERGENCY_FALLBACK', value: 'false' });
+        fallbackEnabled = false;
+        return json({ effectiveValue: 'false' });
+      }
+      return json({ flags: [flag(fallbackEnabled ? 'true' : 'false')] });
+    }
+    return json({}, 404);
+  };
+  const keylessResult = await configureOmniRoute({ baseUrl: 'http://127.0.0.1:20128/v1', model: 'auto', apiKey: '' }, { fetchImpl, localJwtSecret: 'local-test-secret' });
+  assert.equal(keylessResult.verified, true);
+  assert.equal(keylessResult.emergencyFallbackDisabled, true);
+
+  fallbackEnabled = true;
+  const inferenceOnlyResult = await configureOmniRoute({ baseUrl: 'http://127.0.0.1:20128/v1', model: 'auto', apiKey: 'sk-inference-only' }, { fetchImpl, localJwtSecret: 'local-test-secret' });
+  assert.equal(inferenceOnlyResult.verified, true);
+
+  const badKeyResult = await configureOmniRoute({ baseUrl: 'http://127.0.0.1:20128/v1', model: 'auto', apiKey: 'bad-key' }, { fetchImpl, localJwtSecret: 'local-test-secret' });
+  assert.equal(badKeyResult.verified, false);
+  assert.equal(badKeyResult.code, 'invalid_key');
+});

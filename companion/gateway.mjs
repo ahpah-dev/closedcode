@@ -1,4 +1,5 @@
 import { normalizeRoute } from './provider.mjs';
+import { mintLocalOmniRouteCookie } from './omniroute-free.mjs';
 
 const FLAG = 'OMNIROUTE_EMERGENCY_FALLBACK';
 const PATH = '/api/settings/feature-flags';
@@ -31,6 +32,30 @@ async function boundedJson(response) {
   catch { throw new GatewayCheckError('invalid_response', 'OmniRoute did not return a valid safeguard response.'); }
 }
 
+async function probeModelsCatalog(route, { signal, fetchImpl = fetch, cookie = null } = {}) {
+  const response = await fetchImpl(new URL('/v1/models?configuredOnly=true', route.baseUrl).href, {
+    method: 'GET', redirect: 'error',
+    headers: {
+      ...(route.apiKey ? { Authorization: `Bearer ${route.apiKey}` } : {}),
+      ...(cookie ? { Cookie: `auth_token=${cookie}` } : {}),
+    },
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4000)]) : AbortSignal.timeout(4000),
+  });
+  if ([401, 403].includes(response.status)) {
+    await response.body?.cancel().catch(() => {});
+    return 'rejected';
+  }
+  if (response.ok) {
+    const data = await boundedJson(response);
+    if (Array.isArray(data?.data) && data.data.every((model) => model && typeof model.id === 'string')) {
+      return 'accepted';
+    }
+    return 'unknown';
+  }
+  await response.body?.cancel().catch(() => {});
+  return 'unknown';
+}
+
 async function authDiagnostic(route, { signal, fetchImpl = fetch } = {}) {
   if (!route.apiKey) return {
     code: 'missing_key', inferenceAuth: 'missing', managementAuth: 'rejected',
@@ -39,25 +64,17 @@ async function authDiagnostic(route, { signal, fetchImpl = fetch } = {}) {
   try {
     // A read-only catalog request distinguishes rejected credentials from a key
     // accepted for models but denied access to settings. Never run inference.
-    const response = await fetchImpl(new URL('/v1/models?configuredOnly=true', route.baseUrl).href, {
-      method: 'GET', redirect: 'error',
-      headers: { Authorization: `Bearer ${route.apiKey}` },
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4000)]) : AbortSignal.timeout(4000),
-    });
-    if ([401, 403].includes(response.status)) {
-      await response.body?.cancel().catch(() => {});
+    const status = await probeModelsCatalog(route, { signal, fetchImpl });
+    if (status === 'rejected') {
       return {
         code: 'invalid_key', inferenceAuth: 'rejected', managementAuth: 'rejected',
         reason: 'OmniRoute did not accept this key for model access. Copy an active gateway API key from OmniRoute into ClosedCode, then check again. An upstream provider key will not work here.',
       };
     }
-    if (response.ok) {
-      const data = await boundedJson(response);
-      if (Array.isArray(data?.data) && data.data.every((model) => model && typeof model.id === 'string')) return {
-        code: 'management_permission_required', inferenceAuth: 'accepted', managementAuth: 'rejected',
-        reason: 'Your key can access OmniRoute models, but it cannot read gateway safeguards. In OmniRoute, add manage permission to a dedicated ClosedCode key, paste it here, then Verify gateway. Free-only runs stay blocked until verified.',
-      };
-    } else { await response.body?.cancel().catch(() => {}); }
+    if (status === 'accepted') return {
+      code: 'management_permission_required', inferenceAuth: 'accepted', managementAuth: 'rejected',
+      reason: 'Your key can access OmniRoute models, but it cannot read gateway safeguards. In OmniRoute, add manage permission to a dedicated ClosedCode key, paste it here, then Verify gateway. Free-only runs stay blocked until verified.',
+    };
   } catch (error) { if (signal?.aborted) throw error; }
   return {
     code: 'auth_unconfirmed', inferenceAuth: 'unknown', managementAuth: 'rejected',
@@ -65,16 +82,37 @@ async function authDiagnostic(route, { signal, fetchImpl = fetch } = {}) {
   };
 }
 
-async function request(route, { signal, fetchImpl = fetch, configure = false } = {}) {
-  const response = await fetchImpl(new URL(PATH, route.baseUrl).href, {
+async function request(route, { signal, fetchImpl = fetch, configure = false, localJwtSecret } = {}) {
+  const send = (cookie) => fetchImpl(new URL(PATH, route.baseUrl).href, {
     method: configure ? 'PUT' : 'GET', redirect: 'error',
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4000)]) : AbortSignal.timeout(4000),
-    headers: { ...(route.apiKey ? { Authorization: `Bearer ${route.apiKey}` } : {}), ...(configure ? { 'Content-Type': 'application/json' } : {}) },
+    headers: {
+      ...(route.apiKey ? { Authorization: `Bearer ${route.apiKey}` } : {}),
+      ...(cookie ? { Cookie: `auth_token=${cookie}` } : {}),
+      ...(configure ? { 'Content-Type': 'application/json' } : {}),
+    },
     ...(configure ? { body: JSON.stringify({ key: FLAG, value: 'false' }) } : {}),
   });
+  const response = await send(null);
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
     if ([401, 403].includes(response.status)) {
+      const allowLocalCookie = Boolean(localJwtSecret) || fetchImpl === fetch;
+      if (allowLocalCookie) {
+        const cookie = await mintLocalOmniRouteCookie(localJwtSecret);
+        if (cookie) {
+          let canUseLocalCookie = false;
+          try {
+            const catalogState = await probeModelsCatalog(route, { signal, fetchImpl, cookie: route.apiKey ? null : cookie });
+            canUseLocalCookie = catalogState === 'accepted';
+          } catch (error) { if (signal?.aborted) throw error; }
+          if (canUseLocalCookie) {
+            const retry = await send(cookie);
+            if (retry.ok) return boundedJson(retry);
+            await retry.body?.cancel().catch(() => {});
+          }
+        }
+      }
       const diagnostic = await authDiagnostic(route, { signal, fetchImpl });
       throw new GatewayCheckError(diagnostic.code, diagnostic.reason, diagnostic);
     }

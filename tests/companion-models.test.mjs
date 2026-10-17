@@ -154,3 +154,66 @@ test('protected model discovery endpoint returns a safe catalog and fails closed
   assert.equal(catalog.selected, 'coder:free');
   assert.equal(JSON.stringify(catalog).includes('dont-return'), false);
 });
+
+test('OmniRoute Free system classifies no-auth, OAuth/CLI and free-tier providers and fails over across free models', async (t) => {
+  const { workspace } = await fixture(t);
+  const attemptedModels = [];
+  const gateway = await mock(t, async (req, res) => {
+    if (req.url === '/api/settings/feature-flags') {
+      return json(res, { flags: [{ key: 'OMNIROUTE_EMERGENCY_FALLBACK', type: 'boolean', requiresRestart: false, effectiveValue: 'false' }] });
+    }
+    if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
+      return json(res, {
+        data: [
+          { id: 'openai/gpt-4.1', owned_by: 'openai', pricing: { input: 2, output: 8 } },
+          { id: 'if/qwen3-coder-plus', owned_by: 'qoder', root: 'qwen3-coder-plus' },
+          { id: 'opencode/big-pickle', owned_by: 'opencode', root: 'big-pickle' },
+          { id: 'groq/llama-3.3-70b-versatile', owned_by: 'groq', root: 'llama-3.3-70b-versatile' },
+          { id: 'gemini/gemini-2.5-flash', owned_by: 'gemini', root: 'gemini-2.5-flash' },
+        ],
+      });
+    }
+    const payload = await body(req);
+    attemptedModels.push(payload.model);
+    if (attemptedModels.length === 1) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Rate limit reached on primary free model' } }));
+      return;
+    }
+    answer(res, 'OmniRoute Free failover succeeded.');
+  });
+  const fetchImpl = (url, options) => fetch(new URL(url).href.replace('http://127.0.0.1:20128', new URL(gateway).origin), options);
+  const route = { baseUrl: 'http://127.0.0.1:20128/v1', model: 'auto' };
+  const catalog = await discoverModels(route, { refresh: true, fetchImpl });
+  const freeIds = catalog.models.filter((m) => m.free).map((m) => m.id);
+  assert.deepEqual(freeIds, [
+    'if/qwen3-coder-plus',
+    'opencode/big-pickle',
+    'groq/llama-3.3-70b-versatile',
+    'gemini/gemini-2.5-flash',
+  ]);
+  assert.equal(catalog.selected, 'opencode/big-pickle');
+  assert.equal(catalog.freeFallbacks.length, 3);
+
+  const result = await runAgent(
+    { prompt: 'Hello', routing: { freeOnly: true, autoFallback: true, primary: route, fallbacks: [] } },
+    workspace,
+    () => {},
+    { fetchImpl },
+  );
+  assert.equal(result.text, 'OmniRoute Free failover succeeded.');
+  assert.deepEqual(attemptedModels, ['opencode/big-pickle', 'if/qwen3-coder-plus']);
+});
+
+test('fresh OmniRoute with only virtual combos populates built-in no-auth free models automatically', async (t) => {
+  const gateway = await mock(t, (req, res) => {
+    if (req.url === '/api/settings/feature-flags') {
+      return json(res, { flags: [{ key: 'OMNIROUTE_EMERGENCY_FALLBACK', type: 'boolean', requiresRestart: false, effectiveValue: 'false' }] });
+    }
+    return json(res, { data: [{ id: 'auto/best-free', owned_by: 'combo' }] });
+  });
+  const fetchImpl = (url, options) => fetch(new URL(url).href.replace('http://127.0.0.1:20128', new URL(gateway).origin), options);
+  const catalog = await discoverModels({ baseUrl: 'http://127.0.0.1:20128/v1', model: 'auto', apiKey: 'fresh-install' }, { refresh: true, fetchImpl });
+  assert.equal(catalog.selected, 'opencode/qwen3.6-plus-free');
+  assert.ok(catalog.models.some((m) => m.id === 'opencode/big-pickle' && m.free));
+});

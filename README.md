@@ -1,8 +1,8 @@
 # ClosedCode
 
-ClosedCode 0.4.0 introduces Studio: a focused glass coding workspace with live activity, direct file review, a project pad, and local preview controls.
+ClosedCode 0.5.0 refines Studio's deep-space orbital theme and introduces one-click local OmniRoute setup with multi-tier Free routing across built-in no-auth models, free OAuth/CLI providers, and free-tier APIs.
 
-0.4.1 restores the original dark space theme: the starfield, blue orbital horizon, and translucent glass panels, with Studio features retained.
+0.4.0 introduced Studio: a focused glass coding workspace with live activity, direct file review, a project pad, and local preview controls.
 
 ### Work in Studio
 

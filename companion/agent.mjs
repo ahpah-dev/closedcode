@@ -1,6 +1,6 @@
 import { completion, routesFor } from './provider.mjs';
 import { runApprovedCommand } from './commands.mjs';
-import { enforceFreeRoute } from './models.mjs';
+import { discoverModels, enforceFreeRoute, isOmniRoute } from './models.mjs';
 import { prepareRouting } from './routing.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -110,10 +110,22 @@ export async function runAgent(body, workspace, emit, { signal, timeoutMs, maxRo
       let streamedText = '';
       try {
         if (body.routing?.freeOnly === true) {
+          const wasAuto = /^auto(?:$|[/:])/i.test(route.model);
           const verified = await enforceFreeRoute(route, { signal, fetchImpl, requireTools: definitions.length > 0, verifyGatewaySafeguards });
           if (verified.model !== route.model) emit({ type: 'status', text: `Free Only selected ${verified.model}.`, model: verified.model });
           route = verified;
           routes[routeIndex] = verified;
+          if (wasAuto && isOmniRoute(route) && body.routing?.autoFallback !== false) {
+            try {
+              const catalog = await discoverModels(route, { signal, fetchImpl, safeguards: { verified: true } });
+              if (Array.isArray(catalog.freeFallbacks)) {
+                const extras = catalog.freeFallbacks
+                  .filter((modelId) => modelId && modelId !== verified.model && !routes.some((item) => item.baseUrl === verified.baseUrl && item.model === modelId))
+                  .map((modelId) => ({ ...verified, model: modelId }));
+                if (extras.length) routes.splice(routeIndex + 1, 0, ...extras);
+              }
+            } catch {}
+          }
         }
         response = await completion(route, messages, definitions, { signal, timeoutMs, fetchImpl, onDelta: (delta) => { streamedText += delta; emitDelta(delta); } });
         break;

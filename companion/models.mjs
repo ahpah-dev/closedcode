@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 import { normalizeRoute, DEFAULT_PRIMARY, ProviderError } from './provider.mjs';
 import { isOmniRoute, verifyOmniRoute } from './gateway.mjs';
+import {
+  classifyOmniRouteFreeModel,
+  scoreOmniRouteFreeModel,
+  buildFreeCatalogMap,
+  DEFAULT_OMNIROUTE_NOAUTH_FREE_MODELS,
+  mintLocalOmniRouteCookie,
+} from './omniroute-free.mjs';
 export { isOmniRoute } from './gateway.mjs';
 
 const catalogs = new Map();
@@ -32,7 +39,7 @@ function priceEvidence(pricing) {
   return { zero: input === 0 && output === 0 && !conflict, conflict };
 }
 
-function modelRecord(entry, isLocal, localNames) {
+function modelRecord(entry, isLocal, localNames, omniRouteContext = null) {
   const id = entry.id;
   const endpoints = entry.supported_endpoints;
   const chat = (!entry.type || entry.type === 'chat') && (!Array.isArray(endpoints) || endpoints.includes('chat') || endpoints.includes('chat/completions')) && (!Array.isArray(entry.output_modalities) || entry.output_modalities.includes('text'));
@@ -45,6 +52,19 @@ function modelRecord(entry, isLocal, localNames) {
     return { ...record, free: true, reason: 'Downloaded local Ollama inference; no provider token fees.' };
   }
   if ([entry, entry.pricing].some((source) => source && ['free', 'isFree', 'is_free'].some((key) => source[key] === false))) return { ...record, reason: 'Catalog explicitly marks this model as paid.' };
+  if (omniRouteContext) {
+    const inlineEvidence = priceEvidence(entry._inlinePricing);
+    if (inlineEvidence.conflict) return { ...record, reason: 'Catalog contains paid or unknown price components.' };
+    const omniFree = classifyOmniRouteFreeModel(entry, omniRouteContext.freeCatalogMap);
+    if (omniFree?.free) {
+      return {
+        ...record,
+        free: true,
+        reason: omniFree.reason,
+        ...(record.toolCalling === undefined && omniFree.toolCalling !== undefined ? { toolCalling: omniFree.toolCalling } : {}),
+      };
+    }
+  }
   const evidence = priceEvidence(entry.pricing);
   if (evidence.conflict) return { ...record, reason: 'Catalog contains paid or unknown price components.' };
   if (id.endsWith(':free')) return { ...record, free: true, reason: 'Exact :free model alias listed by the configured gateway.' };
@@ -52,12 +72,26 @@ function modelRecord(entry, isLocal, localNames) {
   return record;
 }
 
-async function jsonRequest(url, route, { signal, timeoutMs = 8000, fetchImpl = fetch, body } = {}) {
+async function jsonRequest(url, route, { signal, timeoutMs = 8000, fetchImpl = fetch, body, localJwtSecret } = {}) {
   const deadline = AbortSignal.timeout(timeoutMs);
   const abort = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let response;
   try {
-    response = await fetchImpl(url, { signal: abort, headers: { ...(route.apiKey ? { Authorization: `Bearer ${route.apiKey}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
+    const send = (cookie) => fetchImpl(url, {
+      signal: abort,
+      headers: {
+        ...(route.apiKey ? { Authorization: `Bearer ${route.apiKey}` } : {}),
+        ...(cookie ? { Cookie: `auth_token=${cookie}` } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
+    });
+    response = await send(null);
+    if (!response.ok && [401, 403].includes(response.status) && !route.apiKey && isOmniRoute(route) && (Boolean(localJwtSecret) || fetchImpl === fetch)) {
+      await response.body?.cancel().catch(() => {});
+      const cookie = await mintLocalOmniRouteCookie(localJwtSecret);
+      if (cookie) response = await send(cookie);
+    }
     if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(`HTTP ${response.status}${[401, 403].includes(response.status) ? ': enter this gateway’s API key in Model routing; Cline credentials are not shared automatically' : ''}`); }
     const input = await response.text();
     if (input.length > 4 * 1024 * 1024) throw new Error('Catalog exceeded its size limit');
@@ -68,9 +102,10 @@ async function jsonRequest(url, route, { signal, timeoutMs = 8000, fetchImpl = f
   }
 }
 
-export async function discoverModels(input, { refresh = false, signal, timeoutMs, fetchImpl, safeguards: suppliedSafeguards } = {}) {
+export async function discoverModels(input, { refresh = false, signal, timeoutMs, fetchImpl, safeguards: suppliedSafeguards, localJwtSecret } = {}) {
   const route = normalizeRoute(input, DEFAULT_PRIMARY);
-  const safeguards = isOmniRoute(route) ? suppliedSafeguards || await verifyOmniRoute(route, { signal, fetchImpl }) : undefined;
+  const omniRoute = isOmniRoute(route);
+  const safeguards = omniRoute ? suppliedSafeguards || await verifyOmniRoute(route, { signal, fetchImpl, localJwtSecret }) : undefined;
   const key = createHash('sha256').update(`${route.baseUrl}\0${route.apiKey}`).digest('hex');
   let catalog = catalogs.get(key);
   if (!refresh && catalog && Date.now() - catalog.timestamp < TTL) {
@@ -80,11 +115,14 @@ export async function discoverModels(input, { refresh = false, signal, timeoutMs
   const isLocal = localOllama(base);
   const modelsUrl = new URL(`${route.baseUrl}/models`);
   if (!isLocal) modelsUrl.searchParams.set('configuredOnly', 'true');
-  const options = { signal, timeoutMs, fetchImpl };
+  const options = { signal, timeoutMs, fetchImpl, localJwtSecret };
   const response = await jsonRequest(modelsUrl.href, route, options);
-  const entries = Array.isArray(response.data) ? response.data.filter((entry) => entry && typeof entry.id === 'string').slice(0, 10_000) : [];
+  const entries = Array.isArray(response.data)
+    ? response.data.filter((entry) => entry && typeof entry.id === 'string').slice(0, 10_000).map((entry) => ({ ...entry, ...(entry.pricing ? { _inlinePricing: entry.pricing } : {}) }))
+    : [];
   if (!Array.isArray(response.data)) throw new ProviderError('Model catalog is not OpenAI-compatible; free pricing cannot be verified.', true);
   const localNames = new Set();
+  let omniRouteContext = null;
   if (isLocal) {
     const tags = await jsonRequest(new URL('/api/tags', base).href, route, options);
     for (const model of tags.models || []) {
@@ -104,20 +142,40 @@ export async function discoverModels(input, { refresh = false, signal, timeoutMs
         } catch (error) { if (signal?.aborted) throw error; }
       }
     }));
-  } else if (loopback(base) && base.port === '20128' && entries.some((entry) => !entry.pricing)) {
-    // OmniRoute's management pricing endpoint is optional. Inference-only keys
-    // may lack its manage scope; absence never creates free-price evidence.
-    try {
-      const pricing = await jsonRequest(new URL('/api/pricing', base).href, route, options);
-      for (const entry of entries) {
-        if (entry.pricing) continue;
-        const owner = entry.owned_by;
-        const model = entry.root || entry.id.slice(entry.id.indexOf('/') + 1);
-        if (owner && pricing[owner]?.[model]) entry.pricing = pricing[owner][model];
+  } else if (omniRoute) {
+    let freeCatalogMap = new Map();
+    if (fetchImpl === undefined || fetchImpl === fetch) {
+      try {
+        const freeCatalogPayload = await jsonRequest(new URL('/api/free-models', base).href, route, { ...options, timeoutMs: Math.min(timeoutMs || 8000, 2500) });
+        freeCatalogMap = buildFreeCatalogMap(freeCatalogPayload);
+      } catch (error) { if (signal?.aborted) throw error; }
+    }
+    omniRouteContext = { freeCatalogMap };
+    // When a fresh OmniRoute install has no database connections configured yet,
+    // /v1/models?configuredOnly=true returns empty or only virtual combos even
+    // though OmniRoute's built-in No-Auth providers (OpenCode Free, Routeway,
+    // Kilo Gateway) route immediately via its synthetic "noauth" connection.
+    const hasDirectEntries = entries.some((entry) => !automatic(entry.id) && entry.owned_by !== 'combo');
+    if (!hasDirectEntries) {
+      for (const fallbackEntry of DEFAULT_OMNIROUTE_NOAUTH_FREE_MODELS) {
+        entries.push({ ...fallbackEntry, _inlinePricing: fallbackEntry.pricing });
       }
-    } catch (error) { if (signal?.aborted) throw error; }
+    }
+    if (entries.some((entry) => !entry.pricing && !classifyOmniRouteFreeModel(entry, freeCatalogMap))) {
+      // OmniRoute's management pricing endpoint is optional. Inference-only keys
+      // may lack its manage scope; absence never creates free-price evidence.
+      try {
+        const pricing = await jsonRequest(new URL('/api/pricing', base).href, route, options);
+        for (const entry of entries) {
+          if (entry.pricing || classifyOmniRouteFreeModel(entry, freeCatalogMap)) continue;
+          const owner = entry.owned_by;
+          const model = entry.root || entry.id.slice(entry.id.indexOf('/') + 1);
+          if (owner && pricing[owner]?.[model]) entry.pricing = pricing[owner][model];
+        }
+      } catch (error) { if (signal?.aborted) throw error; }
+    }
   }
-  const models = entries.map((entry) => modelRecord(entry, isLocal, localNames));
+  const models = entries.map((entry) => modelRecord(entry, isLocal, localNames, omniRouteContext));
   // Conflicting duplicate IDs are blocked rather than silently trusting one row.
   const deduped = new Map();
   for (const record of models) {
@@ -131,21 +189,41 @@ export async function discoverModels(input, { refresh = false, signal, timeoutMs
   return summarize(catalog, route, safeguards);
 }
 
+function rankEligibleFreeModels(models, omniRoute, requireTools = false) {
+  const eligible = models.filter((model) => model.free && model.compatible && (!requireTools || model.toolCalling !== false));
+  if (!omniRoute) return eligible;
+  return [...eligible].sort((a, b) => scoreOmniRouteFreeModel(b) - scoreOmniRouteFreeModel(a));
+}
+
 function summarize(catalog, route, safeguards) {
-  const eligible = catalog.models.filter((model) => model.free && model.compatible);
-  const selected = automatic(route.model) || route.model === 'auto' ? eligible.find((model) => model.toolCalling === true)?.id || eligible[0]?.id : eligible.find((model) => model.id === route.model)?.id;
-  return { models: catalog.models, ...(selected ? { selected } : {}), checkedAt: new Date(catalog.timestamp).toISOString(), source: catalog.source, ...(safeguards ? { safeguards } : {}) };
+  const omniRoute = isOmniRoute(route);
+  const eligible = rankEligibleFreeModels(catalog.models, omniRoute, false);
+  const selected = automatic(route.model) || route.model === 'auto'
+    ? eligible.find((model) => model.toolCalling === true)?.id || eligible[0]?.id
+    : eligible.find((model) => model.id === route.model)?.id;
+  const freeFallbacks = omniRoute
+    ? eligible.filter((model) => model.id !== selected && model.toolCalling !== false).slice(0, 3).map((model) => model.id)
+    : [];
+  return {
+    models: catalog.models,
+    ...(selected ? { selected } : {}),
+    ...(freeFallbacks.length ? { freeFallbacks } : {}),
+    checkedAt: new Date(catalog.timestamp).toISOString(),
+    source: catalog.source,
+    ...(safeguards ? { safeguards } : {}),
+  };
 }
 
 export async function enforceFreeRoute(route, { requireTools = false, verifyGatewaySafeguards, ...options } = {}) {
   let safeguards;
-  if (isOmniRoute(route)) {
+  const omniRoute = isOmniRoute(route);
+  if (omniRoute) {
     const result = verifyGatewaySafeguards ? await verifyGatewaySafeguards(route) : await verifyOmniRoute(route, options);
     safeguards = result === true ? { verified: true } : result;
     if (!safeguards?.verified) throw new ProviderError(safeguards?.reason || 'OmniRoute safeguards are unverified. Open Model routing and Verify gateway.', true);
   }
   const catalog = await discoverModels(route, { ...options, safeguards });
-  const eligible = catalog.models.filter((model) => model.free && model.compatible && (!requireTools || model.toolCalling !== false));
+  const eligible = rankEligibleFreeModels(catalog.models, omniRoute, requireTools);
   const selected = automatic(route.model) ? eligible.find((model) => model.toolCalling === true) || eligible[0] : eligible.find((model) => model.id === route.model);
   if (!selected) {
     const chosen = catalog.models.find((model) => model.id === route.model);

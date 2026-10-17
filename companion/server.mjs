@@ -17,7 +17,7 @@ import { trustedNodeExecutable } from './commands.mjs';
 import { stopOwnedProcessTree } from './processes.mjs';
 import { MAX_LOCAL_SESSIONS, MAX_SESSION_BODY_BYTES, createLocalSession, listLocalSessions, normalizeSavedSession, parseLocalSessionPayload, validateLocalSessionId } from './sessions.mjs';
 
-const VERSION = '0.4.1';
+const VERSION = '0.5.0';
 const PRODUCTION_ORIGIN = 'https://closedcode-agent-workspace.vtbyx49kb2.chatgpt.site';
 const DASHBOARD = 'http://127.0.0.1:20128';
 
@@ -66,13 +66,23 @@ async function bodyJson(req, strict = false) {
 
 async function npmCommand() {
   const nodeExecutable = trustedNodeExecutable();
+  const directBins = [
+    process.env.APPDATA ? path.join(process.env.APPDATA, 'npm', 'node_modules', 'omniroute', 'bin', 'omniroute.mjs') : null,
+    path.join(path.dirname(nodeExecutable), 'node_modules', 'omniroute', 'bin', 'omniroute.mjs'),
+    path.join(path.dirname(nodeExecutable), '..', 'lib', 'node_modules', 'omniroute', 'bin', 'omniroute.mjs'),
+    '/usr/local/lib/node_modules/omniroute/bin/omniroute.mjs',
+    '/opt/homebrew/lib/node_modules/omniroute/bin/omniroute.mjs',
+  ].filter(Boolean);
+  for (const binPath of directBins) {
+    try { await fs.access(binPath); return [nodeExecutable, [binPath, 'serve', '--no-open']]; } catch {}
+  }
   const candidates = [process.env.npm_execpath, path.join(path.dirname(nodeExecutable), 'node_modules', 'npm', 'bin', 'npm-cli.js'), path.join(path.dirname(nodeExecutable), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')].filter(Boolean);
   for (const candidate of candidates) {
-    try { await fs.access(candidate); return [nodeExecutable, [candidate, 'exec', '--yes', '--', 'omniroute']]; } catch {}
+    try { await fs.access(candidate); return [nodeExecutable, [candidate, 'exec', '--yes', '--', 'omniroute', '--no-open']]; } catch {}
   }
   // This shell command is a constant: no prompt, route, path or other user input
   // is interpolated. npm.cmd requires cmd.exe on Windows.
-  return process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', 'npm exec --yes -- omniroute']] : ['npm', ['exec', '--yes', '--', 'omniroute']];
+  return process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', 'npm exec --yes -- omniroute --no-open']] : ['npm', ['exec', '--yes', '--', 'omniroute', '--no-open']];
 }
 
 function safeSession(session) {
@@ -166,7 +176,7 @@ export async function createCompanion({ workspace: root = process.cwd(), stateDi
       omniProcess.on('error', (error) => { omniFailure = error.message; omniProcess = null; omniStarting = false; });
       omniProcess.on('close', (code) => { omniFailure = code ? `OmniRoute exited with code ${code}.` : null; omniProcess = null; omniStarting = false; });
       const startWait = Date.now();
-      while (Date.now() - startWait < 4000) {
+      while (Date.now() - startWait < 7500) {
         await new Promise((r) => setTimeout(r, 400));
         if (await omniRunning()) {
           let safeguards;

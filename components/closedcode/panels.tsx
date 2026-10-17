@@ -194,16 +194,17 @@ export function isOmniRouteUrl(baseUrl: string): boolean {
 type DiscoveredModel = { id: string; free: boolean; reason?: string; compatible?: boolean; toolCalling?: boolean };
 
 function GatewayReadiness({ connected, hasKey, safeguards, modelReady, model }: { connected: boolean; hasKey: boolean; safeguards: GatewaySafeguards | null; modelReady: boolean; model?: string }) {
+  const authComplete = safeguards?.managementAuth === "accepted" || safeguards?.inferenceAuth === "accepted" || safeguards?.verified === true;
   const steps = [
-    { name: "Gateway key", detail: safeguards?.inferenceAuth === "accepted" ? "Model access confirmed" : safeguards?.inferenceAuth === "rejected" ? "Key was not accepted" : hasKey ? "Key saved · check access" : "Add your OmniRoute key", complete: safeguards?.managementAuth === "accepted" || safeguards?.inferenceAuth === "accepted" },
-    { name: "Free-only safeguard", detail: safeguards?.verified ? "Live fallback policy verified" : safeguards?.code === "management_permission_required" ? "Key needs manage permission" : connected ? "Verify the running gateway" : "Pair your local engine first", complete: safeguards?.verified === true },
-    { name: "Coding model", detail: modelReady ? model || "Compatible model selected" : "Discover a compatible model", complete: modelReady },
+    { name: "Gateway access", detail: authComplete ? (hasKey ? "API key verified" : "Local loopback verified") : safeguards?.inferenceAuth === "rejected" ? "Key was not accepted" : hasKey ? "Key saved · click Connect" : "One-click local or paste API key", complete: authComplete },
+    { name: "Free-only safeguard", detail: safeguards?.verified ? "Strict free routing verified" : safeguards?.code === "management_permission_required" ? "Key needs manage permission" : connected ? "Click Connect to auto-configure" : "Pair your local engine first", complete: safeguards?.verified === true },
+    { name: "OmniRoute Free model", detail: modelReady ? model || "Verified free model selected" : "Auto-selected on connect", complete: modelReady },
   ];
   return <ol className="ccp-gateway-checklist" aria-label="Gateway readiness">{steps.map((step, index) => <li className={step.complete ? "is-complete" : ""} key={step.name}><span className="ccp-gateway-check-number">{step.complete ? <Check size={13} /> : index + 1}</span><div><strong>{step.name}</strong><span>{step.detail}</span></div></li>)}</ol>;
 }
 
 function GatewayKeyHelp() {
-  return <details className="ccp-gateway-key-help"><summary><KeyRound size={13} />Where do I get this key?<ChevronDown size={12} /></summary><ol><li>Open your OmniRoute dashboard and create a dedicated ClosedCode gateway key.</li><li>Give it <code>manage</code> permission so ClosedCode can read and verify the fallback setting.</li><li>Paste that key here. Credentials saved in Cline are not imported.</li></ol></details>;
+  return <details className="ccp-gateway-key-help"><summary><KeyRound size={13} />How OmniRoute keys &amp; Free routing work<ChevronDown size={12} /></summary><ol><li>Click <strong>Connect &amp; enable free routing</strong> — local OmniRoute starts and verifies safeguards automatically in one click.</li><li>If your OmniRoute instance requires an API key, paste your key from the OmniRoute dashboard above (standard or <code>manage</code> keys both work locally).</li><li>ClosedCode automatically discovers OmniRoute Free providers (OpenCode Free, Qoder, Antigravity, Kiro, Groq, Gemini Flash, Mistral, and `:free` routes) and sets up multi-model free failover.</li></ol></details>;
 }
 
 function eligibleModel(models: DiscoveredModel[], freeOnly: boolean, current: string) {
@@ -255,10 +256,10 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
       apiKey: key,
     };
     try {
-      const startRes = await companionRequest<{ ok: boolean; status: string; dashboardUrl?: string }>(
+      const startRes = await companionRequest<{ ok: boolean; status: string; dashboardUrl?: string; safeguards?: GatewaySafeguards }>(
         connection,
         "/api/omniroute",
-        { method: "POST", body: { apiKey: key, configure: false }, timeout: 35000 }
+        { method: "POST", body: { apiKey: key, route: targetRoute, configure: true }, timeout: 35000 }
       );
       let running = startRes.status === "running";
       if (!running) {
@@ -276,11 +277,13 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
         return;
       }
 
-      const safeRes = await companionRequest<{ safeguards: GatewaySafeguards }>(
-        connection,
-        "/api/omniroute/safeguards",
-        { method: "POST", body: { route: targetRoute, configure: true }, timeout: 15000 }
-      );
+      const safeRes = startRes.safeguards?.verified
+        ? { safeguards: startRes.safeguards }
+        : await companionRequest<{ safeguards: GatewaySafeguards }>(
+            connection,
+            "/api/omniroute/safeguards",
+            { method: "POST", body: { route: targetRoute, configure: true }, timeout: 15000 }
+          );
       if (latestRouting.current.primary.baseUrl !== source.baseUrl || latestRouting.current.primary.apiKey !== source.apiKey) return;
       gatewaySource.current = targetRoute;
       setGatewayResult(safeRes.safeguards);
@@ -290,7 +293,7 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
         return;
       }
 
-      const catalogRes = await companionRequest<{ models: DiscoveredModel[]; selected?: string }>(
+      const catalogRes = await companionRequest<{ models: DiscoveredModel[]; selected?: string; freeFallbacks?: string[] }>(
         connection,
         "/api/models",
         { method: "POST", body: { route: targetRoute, refresh: true }, timeout: 25000 }
@@ -298,15 +301,21 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
       if (latestRouting.current.primary.baseUrl !== source.baseUrl || latestRouting.current.primary.apiKey !== source.apiKey) return;
       const models = Array.isArray(catalogRes.models) ? catalogRes.models : [];
       setCatalog(models); setCatalogSource(targetRoute);
-      const selected = eligibleModel(models, routing.freeOnly, targetRoute.model);
+      const preferred = catalogRes.selected ? models.find((m) => m.id === catalogRes.selected && m.free) : undefined;
+      const selected = preferred || eligibleModel(models, routing.freeOnly, targetRoute.model);
       const chosenModel = selected?.id || "auto";
+      const extraFallbacks = Array.isArray(catalogRes.freeFallbacks)
+        ? catalogRes.freeFallbacks.filter((id) => id && id !== chosenModel).map((id) => ({ ...targetRoute, model: id }))
+        : [];
+      const preservedFallbacks = latestRouting.current.fallbacks.filter((f) => !isOmniRouteUrl(f.baseUrl));
 
       onChange({
         ...latestRouting.current,
         primary: { ...targetRoute, model: chosenModel },
+        ...(extraFallbacks.length ? { fallbacks: [...extraFallbacks, ...preservedFallbacks] } : {}),
       });
       setOmniSuccessMessage(selected
-        ? `Gateway verified. ${chosenModel} is selected and ready for the next run.`
+        ? `OmniRoute Free ready. ${chosenModel} selected${extraFallbacks.length ? ` with ${extraFallbacks.length} verified free fallback${extraFallbacks.length > 1 ? "s" : ""}` : ""}.`
         : "Gateway verified. Connect a compatible zero-cost model in OmniRoute, then discover models below."
       );
     } catch (err) {
@@ -356,7 +365,7 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
     setDiscovering(true); setCatalogError(""); setModelSearch("");
     try {
       const source = routing.primary;
-      const data = await companionRequest<{ models: DiscoveredModel[]; selected?: string; safeguards?: GatewaySafeguards }>(connection, "/api/models", { method: "POST", body: { route: source, refresh: true }, timeout: 25000 });
+      const data = await companionRequest<{ models: DiscoveredModel[]; selected?: string; freeFallbacks?: string[]; safeguards?: GatewaySafeguards }>(connection, "/api/models", { method: "POST", body: { route: source, refresh: true }, timeout: 25000 });
       if (latestRouting.current.primary.baseUrl !== source.baseUrl || latestRouting.current.primary.apiKey !== source.apiKey) return;
       if (!Array.isArray(data.models)) throw new Error("The companion did not return a model catalog.");
       const models = data.models.filter((model) => typeof model.id === "string");
@@ -389,13 +398,13 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
       <section className={`ccp-free-mode ${routing.freeOnly ? "is-protected" : ""}`}><div className="ccp-free-mode-icon"><ShieldCheck size={21} /></div><div><h2>Free models only<span>{routing.freeOnly ? "Protected" : "Off"}</span></h2><p>{routing.freeOnly ? "Only verified zero-cost models or local inference. Paid and unverified routes are blocked, including fallbacks." : "Provider-priced models are allowed. Usage charges depend on your provider account."}</p></div><Toggle label="Free models only" enabled={routing.freeOnly} onChange={() => onChange({ ...routing, freeOnly: !routing.freeOnly, primary: { ...routing.primary, model: !routing.freeOnly && routing.primary.model === "auto" ? "" : routing.primary.model } })} /></section>
       <section className="ccp-route-card ccp-omniroute-card">
         <div className="ccp-card-header">
-          <div><Network size={18} /><h2>Connect your models</h2></div>
+          <div><Network size={18} /><h2>Connect OmniRoute Free</h2></div>
           <span className="ccp-pill"><span className={`ccp-dot ${isOmni && catalogSafeguards?.verified && selectedReady ? "" : isOmni ? "ccp-dot--amber" : "ccp-dot--neutral"}`} />{isOmni && catalogSafeguards?.verified && selectedReady ? "Ready to code" : isOmni ? "Setup in progress" : "OmniRoute"}</span>
         </div>
-        <p className="ccp-card-description">Your gateway, your key, your models. Check each connection once and let the agent handle routing during a run.</p>
+        <p className="ccp-card-description">One-click setup starts or connects to local OmniRoute, verifies strict free safeguards, and activates verified free coding models with automatic failover.</p>
         <GatewayReadiness connected={connection.connected} hasKey={Boolean(omniKey.trim())} safeguards={isOmni ? gatewayResult || catalogSafeguards : null} modelReady={isOmni && selectedReady} model={routing.primary.model} />
         <div className="ccp-route-fields ccp-gateway-key-field">
-          <label className="ccp-field ccp-field--wide"><span>OmniRoute gateway key <small>{omniKey.trim() ? "Saved on this device" : "Required to verify this gateway"}</small></span><span className="ccp-input-with-button"><input disabled={omniSettingUp || discovering || verifyingGateway} aria-label="OmniRoute API key" type={showOmniKey ? "text" : "password"} value={omniKey} placeholder="Paste the key from your OmniRoute dashboard" onChange={(e) => { setOmniKey(e.target.value); setOmniSuccessMessage(""); if (isOmni) onChange({ ...routing, primary: { ...routing.primary, apiKey: e.target.value } }); }} spellCheck={false} autoComplete="off" /><button type="button" aria-label={showOmniKey ? "Hide OmniRoute API key" : "Show OmniRoute API key"} onClick={() => setShowOmniKey(!showOmniKey)}>{showOmniKey ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label>
+          <label className="ccp-field ccp-field--wide"><span>OmniRoute API key <small>{omniKey.trim() ? "Saved on this device" : "Optional for local OmniRoute · paste if key auth is enabled"}</small></span><span className="ccp-input-with-button"><input disabled={omniSettingUp || discovering || verifyingGateway} aria-label="OmniRoute API key" type={showOmniKey ? "text" : "password"} value={omniKey} placeholder="Optional: paste your OmniRoute API key (sk-...)" onChange={(e) => { setOmniKey(e.target.value); setOmniSuccessMessage(""); if (isOmni) onChange({ ...routing, primary: { ...routing.primary, apiKey: e.target.value } }); }} spellCheck={false} autoComplete="off" /><button type="button" aria-label={showOmniKey ? "Hide OmniRoute API key" : "Show OmniRoute API key"} onClick={() => setShowOmniKey(!showOmniKey)}>{showOmniKey ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label>
         </div>
         <GatewayKeyHelp />
         <div className="ccp-setup-router-actions">
@@ -403,7 +412,7 @@ export function RoutingPanel({ routing, onChange, connection, onSetup }: { routi
           {isOmni ? <button type="button" className="ccp-button ccp-button--secondary" disabled={verifyingGateway || omniSettingUp || !connection.connected} onClick={() => verifyGateway()}>{verifyingGateway ? <LoaderCircle size={14} className="ccp-spin" /> : <ShieldCheck size={14} />}{verifyingGateway ? "Checking…" : "Verify gateway"}</button> : null}
           <a className="ccp-text-button" href="http://127.0.0.1:20128" target="_blank" rel="noreferrer">Open OmniRoute dashboard<ExternalLink size={13} /></a>
         </div>
-        <p className="ccp-gateway-action-note">Connect disables OmniRoute’s Emergency Fallback for this gateway, including other clients. Verify only checks its current setting.</p>
+        <p className="ccp-gateway-action-note">Connect disables OmniRoute’s Emergency Fallback for this gateway and discovers all verified zero-cost models.</p>
         {!connection.connected ? <p className="ccp-gateway-next"><Fingerprint size={14} />Pair your local engine in setup to connect this gateway.</p> : null}
         {omniSuccessMessage ? <p className="ccp-inline-note" role="status"><CheckCircle2 size={13} />{omniSuccessMessage}</p> : null}
         {gatewayResult && !omniSuccessMessage ? <div className={`ccp-gateway-diagnostic ${gatewayResult.verified ? "is-ready" : ""}`} role="status"><ShieldCheck size={16} /><div><strong>{gatewayResult.verified ? "Gateway safeguard verified" : gatewayResult.code === "management_permission_required" ? "Model key accepted · one permission needed" : gatewayResult.code === "invalid_key" ? "Check your gateway key" : gatewayResult.code === "missing_key" ? "Add your gateway key" : "Free-only runs are waiting"}</strong><p>{gatewayResult.reason}</p></div></div> : null}
@@ -438,7 +447,7 @@ export function SettingsPanel({ connection, onConnectionChange, theme, onThemeCh
   return <div className="cc-panels"><PanelHeading eyebrow="YOUR SPACE. YOUR PREFERENCES." title="A workspace that feels like you." description="A few thoughtful choices to make ClosedCode your own." />
     <div className="ccp-settings-grid"><section className="ccp-settings-card"><div className="ccp-settings-title"><Sun size={18} /><h2>Appearance</h2></div><p>Choose the light you like to work in.</p><div className="ccp-theme-options" role="group" aria-label="Color theme">{themes.map((option) => { const Icon = option.icon; return <button type="button" key={option.id} className={`ccp-theme-choice ${theme === option.id ? "is-selected" : ""}`} aria-pressed={theme === option.id} onClick={() => onThemeChange(option.id)}><span className={`ccp-theme-preview ccp-theme-preview--${option.id}`}><span /><span /><span /></span><span><Icon size={14} />{option.name}{theme === option.id ? <Check size={12} /> : null}</span></button>; })}</div></section>
       <section className="ccp-settings-card"><div className="ccp-settings-title"><Fingerprint size={18} /><h2>Local companion</h2><span className={`ccp-connection-label ${connection.connected ? "is-connected" : ""}`}><span className="ccp-dot" />{connection.connected ? "Paired" : "Not paired"}</span></div><p>{desktop ? "Your local engine starts automatically with the app." : "The bridge between your browser and your project."}</p>{desktop ? <details className="ccp-advanced-connection"><summary>Advanced connection details<ChevronDown size={12} /></summary>{connectionFields}</details> : connectionFields}<div className="ccp-workspace-setting"><FolderOpen size={15} /><div><span>Selected workspace</span><code>{connection.workspace || "No workspace selected"}</code></div></div><button type="button" className="ccp-button ccp-button--secondary" onClick={onSetup}><Settings2 size={14} />{desktop ? "Manage project" : connection.connected ? "Manage connection" : "Set up companion"}<ArrowRight size={14} /></button></section>
-      <section className="ccp-settings-card ccp-about-card"><div className="ccp-about-mark">c<span>c</span><i /></div><div><div className="ccp-settings-title"><h2>ClosedCode</h2><span className="ccp-included">v0.4.1</span></div><p>An open source coding workspace.<br />Built for the things you want to build.</p></div><div className="ccp-about-facts"><span><Code2 size={14} />Open source</span><span><Laptop size={14} />Local companion</span><span><Network size={14} />OmniRoute support</span></div></section>
+      <section className="ccp-settings-card ccp-about-card"><div className="ccp-about-mark">c<span>c</span><i /></div><div><div className="ccp-settings-title"><h2>ClosedCode</h2><span className="ccp-included">v0.5.0</span></div><p>An open source coding workspace.<br />Built for the things you want to build.</p></div><div className="ccp-about-facts"><span><Code2 size={14} />Open source</span><span><Laptop size={14} />Local companion</span><span><Network size={14} />OmniRoute support</span></div></section>
       <section className="ccp-settings-card ccp-privacy-card"><div className="ccp-settings-title"><ShieldCheck size={18} /><h2>Your workspace, thoughtfully connected.</h2></div><p>Your project files are accessed through a companion running on your computer. The model route you choose receives the context used for AI requests. This browser saves your preferences and connection settings.</p><div><span><Check size={13} />Choose your provider</span><span><Check size={13} />Choose your project</span><span><Check size={13} />Control editing with modes</span></div></section>
     </div>
   </div>;
@@ -560,7 +569,7 @@ export function SetupModal({ onClose, connection, onConnectionChange, freeOnly =
       const startRes = await companionRequest<{ ok: boolean; status: string; dashboardUrl?: string; safeguards?: GatewaySafeguards }>(
         draft,
         "/api/omniroute",
-        { method: "POST", body: { apiKey: key, configure: false }, timeout: 35000 }
+        { method: "POST", body: { apiKey: key, route: targetRoute, configure: true }, timeout: 35000 }
       );
       if (startRes.dashboardUrl) setDashboardUrl(startRes.dashboardUrl);
       let running = startRes.status === "running";
@@ -587,37 +596,49 @@ export function SetupModal({ onClose, connection, onConnectionChange, freeOnly =
       setRouterStatus("running");
 
       setNotice("Configuring gateway safeguards…");
-      let safeResult: GatewaySafeguards | null = null;
-      try {
-        const safeData = await companionRequest<{ safeguards: GatewaySafeguards }>(
-          draft,
-          "/api/omniroute/safeguards",
-          { method: "POST", body: { route: targetRoute, configure: true }, timeout: 15000 }
-        );
-        safeResult = safeData.safeguards;
-        setSafeguards(safeData.safeguards);
-      } catch (safeErr) {
-        const msg = safeErr instanceof Error ? safeErr.message : "Gateway verification failed.";
-        setNotice(""); setError(msg);
-        return;
+      let safeResult: GatewaySafeguards | null = startRes.safeguards?.verified ? startRes.safeguards : null;
+      if (!safeResult) {
+        try {
+          const safeData = await companionRequest<{ safeguards: GatewaySafeguards }>(
+            draft,
+            "/api/omniroute/safeguards",
+            { method: "POST", body: { route: targetRoute, configure: true }, timeout: 15000 }
+          );
+          safeResult = safeData.safeguards;
+        } catch (safeErr) {
+          const msg = safeErr instanceof Error ? safeErr.message : "Gateway verification failed.";
+          setNotice(""); setError(msg);
+          return;
+        }
       }
+      setSafeguards(safeResult);
       if (!safeResult?.verified) {
         setNotice(""); setError(safeResult?.reason || "OmniRoute safeguards could not be verified.");
         return;
       }
 
-      setNotice("Discovering models…");
-      const catalogData = await companionRequest<{ models: DiscoveredModel[] }>(draft, "/api/models", { method: "POST", body: { route: targetRoute, refresh: true }, timeout: 25000 });
-      const selected = eligibleModel(Array.isArray(catalogData.models) ? catalogData.models : [], freeOnly, targetRoute.model);
+      setNotice("Discovering verified free models…");
+      const catalogData = await companionRequest<{ models: DiscoveredModel[]; selected?: string; freeFallbacks?: string[] }>(draft, "/api/models", { method: "POST", body: { route: targetRoute, refresh: true }, timeout: 25000 });
+      const models = Array.isArray(catalogData.models) ? catalogData.models : [];
+      const preferred = catalogData.selected ? models.find((m) => m.id === catalogData.selected && m.free) : undefined;
+      const selected = preferred || eligibleModel(models, freeOnly, targetRoute.model);
       const chosenModel = selected?.id || "auto";
+      const extraFallbacks = Array.isArray(catalogData.freeFallbacks)
+        ? catalogData.freeFallbacks.filter((id) => id && id !== chosenModel).map((id) => ({ ...targetRoute, model: id }))
+        : [];
 
       if (onRoutingChange && routing) {
-        onRoutingChange({ ...routing, primary: { ...targetRoute, model: chosenModel } });
+        const preservedFallbacks = routing.fallbacks.filter((f) => !isOmniRouteUrl(f.baseUrl));
+        onRoutingChange({
+          ...routing,
+          primary: { ...targetRoute, model: chosenModel },
+          ...(extraFallbacks.length ? { fallbacks: [...extraFallbacks, ...preservedFallbacks] } : {}),
+        });
       }
       setOmniSelectedModel(chosenModel);
       setOmniConfigured(Boolean(selected));
       setNotice(selected
-        ? `Ready to code with ${chosenModel}. The gateway and selected model are verified.`
+        ? `Ready to code with ${chosenModel}${extraFallbacks.length ? ` (+${extraFallbacks.length} verified free fallback${extraFallbacks.length > 1 ? "s" : ""})` : ""}.`
         : `Gateway verified. No compatible ${freeOnly ? "zero-cost " : ""}coding model was returned. Connect one in the OmniRoute dashboard, then check again.`
       );
     } catch (failure) {
@@ -640,13 +661,13 @@ export function SetupModal({ onClose, connection, onConnectionChange, freeOnly =
       <section className={`ccp-setup-step ${omniConfigured ? "is-complete" : ""}`}>
         <span className="ccp-setup-number">{omniConfigured ? <Check size={14} /> : desktop ? "2" : "3"}</span>
         <div className="ccp-setup-step-content">
-          <h2>Connect your coding models</h2>
-          <p>Use a dedicated OmniRoute gateway key. We will verify the live fallback policy and choose a compatible {freeOnly ? "zero-cost " : ""}model.</p>
+          <h2>Connect OmniRoute Free</h2>
+          <p>Start or connect your local OmniRoute gateway in one click. We will verify strict free safeguards and select a verified {freeOnly ? "zero-cost " : ""}coding model with automatic failover.</p>
           <GatewayReadiness connected={paired} hasKey={Boolean(omniKey.trim())} safeguards={safeguards} modelReady={omniConfigured} model={omniSelectedModel} />
-          <label className="ccp-field ccp-gateway-key-field"><span>OmniRoute gateway key <small>Manage permission is needed for safeguard verification</small></span><span className="ccp-input-with-button"><input aria-label="Setup OmniRoute API key" type={showOmniKey ? "text" : "password"} value={omniKey} disabled={busy !== null} placeholder="Paste the key from your OmniRoute dashboard" onChange={(e) => { setOmniKey(e.target.value); setSafeguards(null); setOmniConfigured(false); setError(""); setNotice(""); }} spellCheck={false} autoComplete="off" /><button type="button" aria-label={showOmniKey ? "Hide setup OmniRoute API key" : "Show setup OmniRoute API key"} onClick={() => setShowOmniKey(!showOmniKey)}>{showOmniKey ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label>
+          <label className="ccp-field ccp-gateway-key-field"><span>OmniRoute API key <small>Optional for local OmniRoute · paste if key auth is enabled</small></span><span className="ccp-input-with-button"><input aria-label="Setup OmniRoute API key" type={showOmniKey ? "text" : "password"} value={omniKey} disabled={busy !== null} placeholder="Optional: paste your OmniRoute API key (sk-...)" onChange={(e) => { setOmniKey(e.target.value); setSafeguards(null); setOmniConfigured(false); setError(""); setNotice(""); }} spellCheck={false} autoComplete="off" /><button type="button" aria-label={showOmniKey ? "Hide setup OmniRoute API key" : "Show setup OmniRoute API key"} onClick={() => setShowOmniKey(!showOmniKey)}>{showOmniKey ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label>
           <GatewayKeyHelp />
           <div className="ccp-setup-router-actions"><button type="button" className="ccp-button ccp-button--primary" onClick={setupOmniRoute} disabled={!paired || busy !== null}>{busy === "omniroute" ? <LoaderCircle size={14} className="ccp-spin" /> : <Zap size={14} />}{busy === "omniroute" ? "Connecting and checking…" : omniConfigured ? "Check connection again" : "Connect & enable free routing"}</button>{dashboardUrl ? <a className="ccp-text-button" href={dashboardUrl} target="_blank" rel="noreferrer">Open dashboard<ExternalLink size={13} /></a> : null}</div>
-          <p className="ccp-gateway-action-note">Connect disables OmniRoute’s Emergency Fallback for this gateway, including other clients.</p>
+          <p className="ccp-gateway-action-note">Connect disables OmniRoute’s Emergency Fallback for this gateway and discovers all verified zero-cost models.</p>
           {routerStatus ? <span className="ccp-router-state"><span className={`ccp-dot ${routerStatus === "running" ? "" : "ccp-dot--amber"}`} />{routerStatus === "running" ? "Gateway running at 127.0.0.1:20128" : "Gateway starting · check again when ready"}</span> : null}
         </div>
       </section></div>
